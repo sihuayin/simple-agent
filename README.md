@@ -55,6 +55,14 @@ Tools are always available and the model decides whether to call them; when it d
 - `--verbose` prints provider, model, iteration count, and tool-call count to stderr.
 - The system prompt is layered (role → rules → project `AGENTS.md`), stable-first so providers' prefix caches hit — see `docs/adr/0001-layered-system-prompt.md`.
 
+## Security policy
+
+Every tool call is evaluated before execution, in three passes: **deny → ask → allow**; anything unmatched falls back to **ask**. Deny covers irreversible commands (`rm -rf /`, `dd`, `curl … | bash`); allow covers daily operations (`npm run`, `git status/log/diff/branch`, file reads); ask covers risky-but-recoverable actions (`git push --force`, `rm -r`) and **all writes** (`write_file`, `edit_file` always confirm). On `ask`, the CLI prompts on a TTY (`readline`, y/N); in non-interactive runs the call is blocked and the reason is fed back to the model, which must explain in its final answer.
+
+Protected paths are a separate list (`.git/**`, `.env*`, `.claude/**`, `.vscode/**`, `node_modules/**`, `**/*.key`, `**/*.pem`, `**/credentials*`, `**/secret*`): even when an allow rule hits, a file tool targeting a protected path triggers ask. Bash deliberately has no read commands (`cat`, …) in its allow list — otherwise it would bypass the path check; the model should use `read_file` instead.
+
+Custom rules: add a `.rules` file (JSON array, see `.rules.example`). User rules append after the defaults, so the safety floor stays; malformed `.rules` fails loudly rather than silently weakening policy.
+
 ## Token budget
 
 Before each model call the CLI estimates context usage (CJK ≈ 1.5 chars/token, other ≈ 4 chars/token, plus per-message overhead) and auto-compacts when it crosses 80% of the provider's context window (deepseek 384K / claude 200K): older tool rounds are folded into a rolling `[对话摘要]` (one extra summary call) or truncated. Real API usage is checked too — if it crossed the threshold, the loop compacts even when the estimate looks small. A user message starting with `/compact` forces a compaction (the marker is stripped and never sent to the model). `--verbose` shows `compacted=N`.

@@ -43,7 +43,7 @@ A throwaway HTML prototype (`prototype/tools` branch, `src/prototype-tools.html`
 
 ## Out of Scope
 
-- Bash sandboxing / confirmation / allowlists (deferred to a later requirement)
+- ~~Bash sandboxing / confirmation / allowlists~~ → implemented by the security policy (see `.scratch/security/spec.md`)
 - A `--no-tools` opt-out (not requested; advertising tools costs tokens, revisit if needed)
 - Streaming responses
 - Multi-turn interactive agent sessions / session persistence

@@ -9,6 +9,16 @@ import {
   TokenBudget,
   type BudgetConfig,
 } from "./budget.js";
+import {
+  askRejectedMessage,
+  candidateFor,
+  defaultAsk,
+  DEFAULT_PROTECTED_PATHS,
+  evaluatePolicy,
+  loadRules,
+  policyFeedbackMessage,
+  type PolicyRule,
+} from "./policy.js";
 import { TOOLS } from "../tools/registry.js";
 import type { ToolContext } from "../tools/types.js";
 
@@ -29,6 +39,10 @@ export interface RunAgentInput {
   forceCompact?: boolean;
   /** Injectable summarizer for the summary compaction strategy (test seam). */
   summarizer?: (dropped: NormalizedMessage[]) => Promise<string>;
+  /** Policy rules + protected paths; defaults load .rules from the workspace. */
+  policy?: { rules: PolicyRule[]; protectedPaths: string[] };
+  /** Human confirmation for ask decisions; defaults to a TTY readline prompt. */
+  ask?: (message: string) => Promise<boolean>;
 }
 
 export interface AgentResult {
@@ -60,6 +74,11 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
   const fixedTokens = fixedTokensFor(input.systemPrompt, tools);
   const summarizer =
     input.summarizer ?? ((dropped) => summarizeWithAdapter(input.adapter, input.model, dropped));
+  const policy = input.policy ?? {
+    rules: await loadRules(input.toolContext.workspace),
+    protectedPaths: DEFAULT_PROTECTED_PATHS,
+  };
+  const ask = input.ask ?? defaultAsk;
 
   const messages: NormalizedMessage[] = [];
   if (input.systemPrompt) messages.push({ role: "system", content: input.systemPrompt });
@@ -146,13 +165,31 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       let content: string;
       if (!tool) {
         content = `Unknown tool: ${call.name}. Available: ${Object.keys(TOOLS).join(", ")}`;
-      } else {
-        try {
-          content = String(await tool.execute((call.input ?? {}) as Record<string, unknown>, input.toolContext));
-        } catch (e) {
-          content = e instanceof Error ? e.message : String(e);
-        }
+        messages.push({ role: "tool", toolCallId: call.id, content });
+        continue;
       }
+
+      const toolInput = (call.input ?? {}) as Record<string, unknown>;
+      const candidate = candidateFor(call.name, toolInput);
+      const decision = evaluatePolicy(candidate, policy.rules, policy.protectedPaths);
+
+      const execute = async (): Promise<string> => {
+        try {
+          return String(await tool.execute(toolInput, input.toolContext));
+        } catch (e) {
+          return e instanceof Error ? e.message : String(e);
+        }
+      };
+
+      if (decision.action === "deny") {
+        content = policyFeedbackMessage(decision, candidate);
+      } else if (decision.action === "ask") {
+        const allowed = await ask(policyFeedbackMessage(decision, candidate));
+        content = allowed ? await execute() : askRejectedMessage(candidate);
+      } else {
+        content = await execute();
+      }
+
       if (content.length > TOOL_RESULT_CAP) {
         content = content.slice(0, TOOL_RESULT_CAP) + `\n[TOOL_RESULT_TRUNCATED — ${content.length} chars]`;
       }

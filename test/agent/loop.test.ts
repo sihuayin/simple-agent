@@ -139,7 +139,7 @@ describe("runAgent", () => {
 
   it("truncates oversized tool results with a marker", async () => {
     const adapter = fakeAdapter([
-      toolUseRaw("bash", "c9", { command: "yes a | head -c 9000" }),
+      toolUseRaw("read_file", "c9", { path: "big.txt" }),
       finalRaw("done"),
     ]);
     await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx });
@@ -195,6 +195,69 @@ describe("runAgent", () => {
     const lastChat = adapter.chats[2]!;
     expect(lastChat.some((m) => m.role === "user" && m.content.startsWith("[对话摘要] DRIFT-SUM"))).toBe(true);
     expect(result.compactions).toBe(1);
+  });
+
+  it("blocks a denied tool call and feeds the denial message back", async () => {
+    const adapter = fakeAdapter([
+      toolUseRaw("bash", "c1", { command: "rm -rf /" }),
+      finalRaw("done"),
+    ]);
+    const result = await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[permission denied]");
+    expect(toolMsg.content).toContain("rm -rf /");
+    expect(result.toolCallsMade).toBe(1); // 工具被评估，但未执行
+  });
+
+  it("executes an ask decision when the human confirms", async () => {
+    const adapter = fakeAdapter([
+      toolUseRaw("write_file", "c1", { path: "new-file.txt", content: "hi" }),
+      finalRaw("done"),
+    ]);
+    const ask = vi.fn(async () => true);
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, ask });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(toolMsg.content).toContain("wrote"); // 确实执行了
+    expect(await fs.readFile(path.join(root, "new-file.txt"), "utf8")).toBe("hi");
+  });
+
+  it("does not execute an ask decision when the human rejects", async () => {
+    const adapter = fakeAdapter([
+      toolUseRaw("write_file", "c1", { path: "rejected.txt", content: "x" }),
+      finalRaw("done"),
+    ]);
+    const ask = vi.fn(async () => false);
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, ask });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[permission denied by user]");
+    await expect(fs.readFile(path.join(root, "rejected.txt"))).rejects.toThrow();
+  });
+
+  it("asks before an allow-rule hit when the path is protected", async () => {
+    const adapter = fakeAdapter([
+      toolUseRaw("read_file", "c1", { path: ".env" }),
+      finalRaw("done"),
+    ]);
+    const ask = vi.fn(async () => false);
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, ask });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[permission denied by user]");
+  });
+
+  it("loads custom rules from the workspace .rules file", async () => {
+    await fs.writeFile(path.join(root, ".rules"), JSON.stringify([{ tool: "bash", pattern: "echo *", action: "deny" }]));
+    try {
+      const adapter = fakeAdapter([
+        toolUseRaw("bash", "c1", { command: "echo hi" }),
+        finalRaw("done"),
+      ]);
+      await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx });
+      const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+      expect(toolMsg.content).toContain("[permission denied]");
+    } finally {
+      await fs.rm(path.join(root, ".rules"), { force: true });
+    }
   });
 
   it("force-compacts on /compact even below the threshold", async () => {
