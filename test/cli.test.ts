@@ -39,6 +39,11 @@ describe("parseArgs", () => {
     expect(parseArgs(["--verbose"]).verbose).toBe(true);
   });
 
+  it("parses --tools and defaults it to false", () => {
+    expect(parseArgs(["--tools", "do it"]).tools).toBe(true);
+    expect(parseArgs(["do it"]).tools).toBe(false);
+  });
+
   it("leaves prompt undefined when no positional is given (so stdin is used)", () => {
     expect(parseArgs(["--verbose"]).prompt).toBeUndefined();
     expect(parseArgs([]).prompt).toBeUndefined();

@@ -121,4 +121,15 @@ describe("runAgent", () => {
     });
     expect(adapter.chats[0]![0]).toEqual({ role: "system", content: "you are a coding agent" });
   });
+
+  it("truncates oversized tool results with a marker", async () => {
+    const adapter = fakeAdapter([
+      toolUseRaw("bash", "c9", { command: "yes a | head -c 9000" }),
+      finalRaw("done"),
+    ]);
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[TOOL_RESULT_TRUNCATED");
+    expect(toolMsg.content.length).toBeLessThan(9000);
+  });
 });

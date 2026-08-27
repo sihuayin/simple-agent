@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { ToolExecutionError, type ToolEntry } from "./types.js";
-import { walkFiles } from "./workspace.js";
+import { resolveInWorkspace, walkFiles } from "./workspace.js";
 
 export const listFilesTool: ToolEntry = {
   name: "list_files",
@@ -17,19 +17,20 @@ export const listFilesTool: ToolEntry = {
     required: [],
   },
   async execute(input, ctx) {
-    const base = input.path ? path.resolve(ctx.workspace, String(input.path)) : ctx.workspace;
+    const base = input.path ? resolveInWorkspace(ctx.workspace, String(input.path)) : ctx.workspace;
     let stat;
     try {
       stat = await fs.stat(base);
     } catch {
       throw new ToolExecutionError(`list_files: no such path: ${input.path ?? "."}`);
     }
-    const relBase = path.relative(ctx.workspace, base);
-    const prefix = relBase === "" ? "" : relBase.split(path.sep).join("/") + "/";
 
     if (stat.isFile()) {
-      return `${prefix}${path.basename(base)}`;
+      return path.relative(ctx.workspace, base).split(path.sep).join("/");
     }
+
+    const relBase = path.relative(ctx.workspace, base);
+    const prefix = relBase === "" ? "" : relBase.split(path.sep).join("/") + "/";
 
     const entries = await fs.readdir(base, { withFileTypes: true });
     if (!input.recursive) {

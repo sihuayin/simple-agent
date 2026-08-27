@@ -29,6 +29,14 @@ beforeAll(async () => {
   );
   await fs.writeFile(path.join(workspace, "src", "app.ts"), 'export const x = 1;\n// TODO: wire tools\n');
   await fs.writeFile(path.join(workspace, "node_modules", "junk.txt"), "TODO in node_modules");
+  await fs.writeFile(
+    path.join(workspace, "big.txt"),
+    Array.from({ length: 1500 }, (_, i) => `row ${i + 1}`).join("\n"),
+  );
+  await fs.writeFile(
+    path.join(workspace, "many.txt"),
+    Array.from({ length: 60 }, (_, i) => `dup line ${i + 1}`).join("\n"),
+  );
   ctx = { workspace, cwd: workspace, env: process.env };
 });
 
@@ -56,6 +64,13 @@ describe("read_file", () => {
     await expect(readFileTool.execute({ path: "nope.txt" }, ctx)).rejects.toThrow(ToolExecutionError);
   });
 
+  it("caps maxLines at 1000 even when asked for more", async () => {
+    const out = await readFileTool.execute({ path: "big.txt", maxLines: 5000 }, ctx);
+    const lines = out.split("\n");
+    expect(lines).toHaveLength(1001); // 1000 lines + TRUNCATED marker
+    expect(out).toContain("[TRUNCATED — 1500 lines total");
+  });
+
   it("rejects a path that escapes the workspace", async () => {
     await expect(readFileTool.execute({ path: "../secret.txt" }, ctx)).rejects.toThrow(/escapes the workspace/);
   });
@@ -72,6 +87,12 @@ describe("write_file", () => {
     const out = await writeFileTool.execute({ path: "nested/deep/new.txt", content: "hello\nworld" }, ctx);
     expect(out).toContain("wrote 2 line(s)");
     expect(await fs.readFile(path.join(workspace, "nested/deep/new.txt"), "utf8")).toBe("hello\nworld");
+  });
+
+  it("overwrites an existing file", async () => {
+    await writeFileTool.execute({ path: "overwrite.txt", content: "first" }, ctx);
+    await writeFileTool.execute({ path: "overwrite.txt", content: "second" }, ctx);
+    expect(await fs.readFile(path.join(workspace, "overwrite.txt"), "utf8")).toBe("second");
   });
 
   it("rejects a path that escapes the workspace", async () => {
@@ -103,6 +124,11 @@ describe("grep", () => {
   it("reports no matches", async () => {
     expect(await grepTool.execute({ pattern: "zzz-no-such" }, ctx)).toContain("no matches");
   });
+
+  it("caps results at maxResults", async () => {
+    const out = await grepTool.execute({ pattern: "dup line" }, ctx);
+    expect(out.split("\n")).toHaveLength(50);
+  });
 });
 
 describe("glob", () => {
@@ -125,6 +151,14 @@ describe("list_files", () => {
     const out = await listFilesTool.execute({ recursive: true }, ctx);
     expect(out).toContain("src/app.ts");
   });
+
+  it("lists a single file path", async () => {
+    expect(await listFilesTool.execute({ path: "short.txt" }, ctx)).toBe("short.txt");
+  });
+
+  it("rejects a path that escapes the workspace", async () => {
+    await expect(listFilesTool.execute({ path: "../secret.txt" }, ctx)).rejects.toThrow(/escapes the workspace/);
+  });
 });
 
 describe("bash", () => {
@@ -136,5 +170,10 @@ describe("bash", () => {
   it("reports a failing command", async () => {
     const out = await bashTool.execute({ command: "exit 3" }, ctx);
     expect(out.length).toBeGreaterThan(0);
+  });
+
+  it("honors timeoutSeconds", async () => {
+    const out = await bashTool.execute({ command: "sleep 5", timeoutSeconds: 1 }, ctx);
+    expect(out).toMatch(/bash:|Command failed|killed|timed? ?out/i);
   });
 });
