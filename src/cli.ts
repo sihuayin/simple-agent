@@ -3,7 +3,6 @@ import { stdin } from "node:process";
 import readline from "node:readline/promises";
 
 import { PROVIDERS } from "./adapters/providers.js";
-import type { ConversationResult } from "./adapters/types.js";
 
 export interface CliArgs {
   prompt: string | undefined;
@@ -85,30 +84,6 @@ function readStdin(): Promise<string> {
     stdin.on("end", () => resolve(data));
     stdin.on("error", reject);
   });
-}
-
-/** Pure formatting so tests can assert on what gets printed. */
-export function formatResult(
-  result: ConversationResult,
-  options: { verbose: boolean },
-): { stdout: string; stderr: string | null } {
-  const stdout = `${result.content ?? ""}\n`;
-
-  let stderr: string | null = null;
-  if (options.verbose) {
-    const parts = [`model=${result.model}`];
-    const usage = result.usage;
-    if (usage) {
-      parts.push(
-        `prompt=${usage.promptTokens}`,
-        `completion=${usage.completionTokens}`,
-        `total=${usage.totalTokens}`,
-      );
-    }
-    stderr = `[${parts.join(" ")}]\n`;
-  }
-
-  return { stdout, stderr };
 }
 
 export function helpText(): string {

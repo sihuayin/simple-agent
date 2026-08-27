@@ -7,7 +7,6 @@ import { runAgent } from "./agent/loop.js";
 import { buildSystemPrompt } from "./agent/system_prompt.js";
 import {
   CliUsageError,
-  formatResult,
   helpText,
   parseArgs,
   readPrompt,

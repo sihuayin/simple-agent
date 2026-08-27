@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   resolveModel,
   resolveProvider,
-  UnknownProviderError,
 } from "../../src/adapters/resolve.js";
 
 describe("resolveProvider", () => {
