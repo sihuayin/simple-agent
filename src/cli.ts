@@ -57,7 +57,8 @@ export function resolveModel(
   flag: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return flag ?? env.DEEPSEEK_MODEL ?? DEFAULT_MODEL;
+  const envModel = env.DEEPSEEK_MODEL?.trim();
+  return flag ?? (envModel ? envModel : DEFAULT_MODEL);
 }
 
 /** Positional prompt first; else piped stdin; else an interactive TTY prompt. */
