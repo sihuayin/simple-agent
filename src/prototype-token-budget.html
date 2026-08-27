@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型：Token 预算管理（估算 + 自动压缩 + /compact）</title>
+<style>
+  :root {
+    --accent: #b45309; --accent-soft: #fffbeb; --accent-border: #fde68a;
+    --ink: #1e293b; --muted: #64748b; --border: #e2e8f0;
+    --ok: #059669; --err: #dc2626; --warn: #b45309;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); margin: 0; background: #f8fafc; line-height: 1.6; }
+  .wrap { max-width: 800px; margin: 0 auto; padding: 32px 20px 90px; }
+  header h1 { font-size: 22px; margin: 0 0 6px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 999px; padding: 2px 10px; margin-bottom: 10px; }
+  .question { background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; font-size: 13.5px; margin: 10px 0 20px; }
+  section { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; }
+  .pill.ok { background: #ecfdf5; color: var(--ok); }
+  .pill.warn { background: var(--accent-soft); color: var(--warn); }
+  .bar { height: 18px; background: #f1f5f9; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; position: relative; margin: 8px 0; }
+  .bar .fill { height: 100%; background: var(--accent); transition: width .2s; }
+  .bar .threshold { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--err); }
+  .kv { display: grid; grid-template-columns: 170px 1fr; gap: 3px 12px; font-size: 13.5px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-weight: 500; font-family: var(--mono); font-size: 13px; }
+  .callout { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
+  .log { font-family: var(--mono); font-size: 12px; max-height: 300px; overflow-y: auto; background: #0f172a; color: #cbd5e1; border-radius: 8px; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+  .log .sum { color: #fbbf24; font-weight: 700; } .log .drop { color: #fca5a5; } .log .ok { color: #6ee7b7; } .log .dim { color: #64748b; }
+  .controls { display: flex; flex-direction: column; gap: 10px; }
+  .ctl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+  .lbl { color: var(--muted); min-width: 130px; font-family: var(--mono); font-size: 12.5px; }
+  button { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--ink); border-radius: 6px; padding: 4px 11px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 6px 16px; }
+  button.warn:hover { border-color: var(--err); color: var(--err); }
+  select, input[type=text], input[type=range] { font: inherit; font-size: 12.5px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tab { border-radius: 999px; padding: 4px 12px; font-size: 12.5px; }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .walk-desc { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .step { margin: 8px 0; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .step .num { display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); text-align: center; font-size: 12px; font-weight: 700; line-height: 22px; margin-right: 8px; }
+  .step.done .num { background: var(--ok); color: #fff; }
+  .step.done { border-color: #bbf7d0; background: #f0fdf4; }
+  .step .note { color: var(--muted); font-size: 12px; margin-left: 30px; }
+  .done-banner { color: var(--ok); font-weight: 600; font-size: 13.5px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="badge">原型 PROTOTYPE · 逻辑验证</span>
+  <h1>Token 预算管理：估算 · 阈值 · 自动压缩 · /compact</h1>
+  <div class="question">
+    <strong>要回答的问题：</strong>这套上下文预算逻辑对不对——① 发送前用"估算"决定要不要压缩（CJK 按 1.5 字符/token、其余按 4 字符/token）；② 超过阈值（默认窗口的 80%）自动压缩；③ 用户消息含 <code>/compact</code> 时强制压缩；④ 压缩后估算回落、对话继续。
+    <br><br>
+    <strong>设计约定（要验证的）</strong>：估算用于<b>发送前</b>决策（API 的真实用量只有调用后才知道）；API 返回的 <code>usage.prompt_tokens</code> 作为<b>事后校准</b>——若实际用量也超阈值，下一轮照样压缩（应对估算偏小）。固定开销 = 分层系统提示词 + 工具 schema；每条消息另计少量格式开销。压缩策略默认<b>滚动摘要</b>（保留最近 N 轮原文，更早的历史压成摘要，需一次额外的模型调用）；备选<b>直接截断</b>（丢最旧的工具结果，零成本但丢信息）。<br>
+    <strong>上下文窗口（真值）</strong>：deepseek-v4 = 384K；claude 4.x = 200K。<br>
+    <strong>适用范围</strong>：预算机制对会话无感——当前 CLI 的一次 agent 运行（工具轮次累积）或未来的多轮会话都适用；<code>/compact</code> 指令本身不会发给模型。<br>
+    <strong>待拍板</strong>：<code>/compact</code> 目前按“独立消息或行首指令”识别（<code>read /compact</code> 不触发）——避免“解释一下 /compact”这类正常问题误触发；若要子串匹配请说。
+  </div>
+</header>
+
+<section>
+  <h2>预算状态</h2>
+  <dl class="kv">
+    <dt>估算 / 阈值 / 窗口</dt><dd id="st-nums">—</dd>
+    <dt>固定开销（提示词+工具）</dt><dd id="st-fixed">—</dd>
+    <dt>摘要 / 保留消息</dt><dd id="st-sum">—</dd>
+    <dt>压缩次数</dt><dd id="st-compactions">0</dd>
+    <dt>上次实际用量（漂移）</dt><dd id="st-drift">—</dd>
+    <dt>刚发生</dt><dd id="st-changed" style="font-weight:400">初始状态。</dd>
+  </dl>
+  <div class="bar" id="budget-bar"><div class="fill" id="bar-fill"></div><div class="threshold" id="bar-threshold"></div></div>
+  <div style="font-size:12px;color:var(--muted)">红色竖线 = 压缩阈值；橙色填充 = 当前估算。</div>
+</section>
+
+<div class="two-col">
+  <section style="margin-bottom:16px">
+    <h2>会话内容（估算明细）</h2>
+    <div class="log" id="log">（空）</div>
+  </section>
+  <section style="margin-bottom:16px">
+    <h2>事件日志</h2>
+    <div class="log" id="events">（空）</div>
+  </section>
+</div>
+
+<section>
+  <h2>自由操作</h2>
+  <div class="controls">
+    <div class="ctl-row">
+      <span class="lbl">窗口 / 阈值 / 策略</span>
+      <select id="window"><option value="20000">20K（演示）</option><option value="64000">64K</option><option value="200000">200K (claude)</option><option value="384000">384K (deepseek)</option></select>
+      <input type="range" id="threshold" min="50" max="95" value="80" style="width:140px"><span id="threshold-label" style="font-size:12px">80%</span>
+      <select id="strategy"><option value="summary">滚动摘要</option><option value="truncate">直接截断</option></select>
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">用户消息</span>
+      <input type="text" id="user-msg" placeholder="输入用户消息内容…" style="width:300px">
+      <button id="add-user">追加用户消息</button>
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">工具回合</span>
+      <select id="round-preset">
+        <option value="small">read_file 结果（20 行）</option>
+        <option value="big">read_file 结果（500 行）</option>
+        <option value="grep">grep 结果（50 条）</option>
+        <option value="bash">bash 输出（长）</option>
+        <option value="chat">纯文本回复（中）</option>
+      </select>
+      <button id="add-round">追加一个模型回合</button>
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">决策与控制</span>
+      <button id="decide" class="primary">检查预算（发送前）</button>
+      <button id="compact">强制压缩</button>
+      <button id="simulate-actual">模拟 API 返回实际用量</button>
+      <button id="reset" class="warn">重置</button>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>引导场景</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="walk-desc" id="walk-desc"></div>
+  <div id="walk-steps"></div>
+</section>
+
+</div>
+
+<!-- ================================================================
+     纯逻辑模块（可整体搬进真实代码库，如 src/agent/budget.ts）：
+     不引用任何 DOM。页面只负责调用。
+     ================================================================ -->
+<script id="budget-module">
+"use strict";
+
+// ---------- 估算 ----------
+// CJK（假名/汉字/谚文）按 1.5 字符/token，其余按 4 字符/token；向上取整。
+// 偏保守方向：中文按此规则估算会略高于真实分词，用于预算决策是安全的。
+const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/;
+
+function estimateTokens(text) {
+  let cjk = 0, other = 0;
+  for (const ch of String(text)) {
+    if (CJK_RE.test(ch)) cjk++; else other++;
+  }
+  return Math.ceil(cjk / 1.5) + Math.ceil(other / 4);
+}
+
+// 每条消息的角色/格式开销
+const MSG_OVERHEAD = 3;
+
+function messageTokens(content) {
+  return MSG_OVERHEAD + estimateTokens(content);
+}
+
+// ---------- 预算状态机 ----------
+function createBudget({ contextWindow = 20000, thresholdPct = 0.8, keepRounds = 2, strategy = "summary", systemTokens = 400, toolSchemaTokens = 900 } = {}) {
+  return {
+    contextWindow,
+    threshold: Math.floor(contextWindow * thresholdPct),
+    keepRounds,
+    strategy,
+    systemTokens,
+    toolSchemaTokens,
+    fixedTokens: systemTokens + toolSchemaTokens,
+    messages: [],      // { id, kind: "user"|"assistant"|"tool", label, content, tokens }
+    summary: null,     // { tokens, text }
+    compactions: 0,
+    events: [],
+    estimate: 0,
+    lastActual: null,  // API 返回的真实 prompt_tokens
+  };
+}
+
+function currentEstimate(b) {
+  let total = b.fixedTokens + (b.summary ? b.summary.tokens : 0);
+  for (const m of b.messages) total += m.tokens;
+  return total;
+}
+
+/** 发送前决策：估算超阈值 → 压缩；或上次实际用量超阈值 → 压缩（校准）。 */
+function decide(b) {
+  b.estimate = currentEstimate(b);
+  if (b.estimate >= b.threshold) {
+    return { action: "compact", reason: `估算 ${b.estimate} ≥ 阈值 ${b.threshold}` };
+  }
+  if (b.lastActual !== null && b.lastActual >= b.threshold) {
+    return { action: "compact", reason: `实际用量 ${b.lastActual} ≥ 阈值（估算 ${b.estimate} 偏小）` };
+  }
+  return { action: "ok", reason: `估算 ${b.estimate} < 阈值 ${b.threshold}` };
+}
+
+function appendUser(b, text) {
+  const tokens = messageTokens(text);
+  b.messages.push({ id: "u" + (b.messages.length + 1), kind: "user", label: "user", content: text, tokens });
+  b.events.push(`追加用户消息（${tokens} token）`);
+}
+
+function appendRound(b, { assistantText, tools }) {
+  const a = messageTokens(assistantText);
+  b.messages.push({ id: "a" + (b.messages.length + 1), kind: "assistant", label: "assistant", content: assistantText, tokens: a });
+  b.events.push(`追加 assistant 消息（${a} token）`);
+  for (const t of tools) {
+    const tk = messageTokens(t.content);
+    b.messages.push({ id: "t" + (b.messages.length + 1), kind: "tool", label: `tool:${t.name}`, content: t.content, tokens: tk });
+    b.events.push(`追加工具结果 ${t.name}（${tk} token）`);
+  }
+}
+
+/** 用户消息含 /compact → 压缩且该指令不发给模型。返回是否触发。 */
+function isCompactCommand(text) {
+  return String(text).trim() === "/compact" || String(text).trimStart().startsWith("/compact");
+}
+
+/**
+ * 压缩。summary 策略：保留最近 keepRounds 轮原文，更早的折叠进滚动摘要
+ * （真实实现中摘要由一次额外的模型调用生成；此处由调用方传入文本）。
+ * truncate 策略：从最旧开始丢弃工具结果，直到估算低于阈值。
+ */
+function compact(b, summaryText) {
+  const before = currentEstimate(b);
+  if (b.strategy === "summary") {
+    // 一轮 = assistant + 其工具结果；从后往前数 keepRounds 轮保留。
+    let keep = 0, kept = [];
+    for (let i = b.messages.length - 1; i >= 0 && keep < b.keepRounds; i--) {
+      if (b.messages[i].kind === "assistant") keep++;
+      kept.unshift(b.messages[i]);
+    }
+    const dropped = b.messages.slice(0, b.messages.length - kept.length);
+    const droppedTokens = dropped.reduce((s, m) => s + m.tokens, 0);
+    const oldSummary = b.summary;
+    const newSummaryText = summaryText || `（已压缩 ${dropped.length} 条消息，原 ${droppedTokens} token）`;
+    b.summary = { tokens: messageTokens(newSummaryText) + (oldSummary ? oldSummary.tokens : 0), text: newSummaryText };
+    b.messages = kept;
+    b.compactions++;
+    b.events.push(`自动压缩 #${b.compactions}（summary）：丢弃 ${dropped.length} 条（${droppedTokens} token），摘要 ${b.summary.tokens} token；估算 ${before} → ${currentEstimate(b)}`);
+  } else {
+    // truncate：从最旧开始丢工具结果
+    let dropped = 0;
+    while (currentEstimate(b) >= b.threshold && b.messages.some((m) => m.kind === "tool")) {
+      const idx = b.messages.findIndex((m) => m.kind === "tool");
+      b.messages.splice(idx, 1);
+      dropped++;
+    }
+    b.compactions++;
+    b.events.push(`自动压缩 #${b.compactions}（truncate）：丢弃 ${dropped} 条工具结果；估算 ${before} → ${currentEstimate(b)}`);
+  }
+  b.estimate = currentEstimate(b);
+}
+</script>
+
+<!-- 页面装配 -->
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+let budget = createBudget();
+let walkthrough = null;
+let walkthroughStep = 0;
+let msgSeq = 0;
+
+function reset(changeMsg) {
+  budget = createBudget({
+    contextWindow: Number($("window").value),
+    thresholdPct: Number($("threshold").value) / 100,
+    strategy: $("strategy").value,
+  });
+  walkthrough = null;
+  budget.events.push(changeMsg || "已重置。");
+  render();
+}
+
+const PRESETS = {
+  small: () => ({ assistantText: "read_file 已读取，共 20 行。", tools: [{ name: "read_file", content: Array.from({ length: 20 }, (_, i) => `line ${String(i + 1).padStart(3, "0")}: const value = compute(${i});`).join("\n") }] }),
+  big: () => ({ assistantText: "read_file 返回内容如下（300 行）。", tools: [{ name: "read_file", content: Array.from({ length: 300 }, (_, i) => `line ${String(i + 1).padStart(3, "0")}: export const symbol${i} = "value-${i}"; // a comment to pad the line a little further`).join("\n") }] }),
+  grep: () => ({ assistantText: "grep 匹配结果：", tools: [{ name: "grep", content: Array.from({ length: 50 }, (_, i) => `src/file${i % 5}.ts:${i + 1}: const match${i} = find("TODO");`).join("\n") }] }),
+  bash: () => ({ assistantText: "bash 输出：", tools: [{ name: "bash", content: Array.from({ length: 60 }, (_, i) => `build output line ${i + 1}: [info] compiled module ${i} successfully in 1.2s`).join("\n") }] }),
+  chat: () => ({ assistantText: "这是一个中等长度的纯文本回复，用于演示对话逐步增长的过程。", tools: [] }),
+};
+
+function render() {
+  const est = currentEstimate(budget);
+  const pct = Math.min(100, (est / budget.contextWindow) * 100);
+  const thPct = (budget.threshold / budget.contextWindow) * 100;
+
+  $("st-nums").textContent = `${est} / ${budget.threshold} / ${budget.contextWindow}`;
+  $("st-fixed").textContent = `${budget.systemTokens} + ${budget.toolSchemaTokens} = ${budget.fixedTokens}`;
+  const kept = budget.messages.reduce((s, m) => s + m.tokens, 0);
+  $("st-sum").textContent = `${budget.summary ? budget.summary.tokens + " token" : "无"} / ${budget.messages.length} 条 (${kept} token)`;
+  $("st-compactions").textContent = budget.compactions;
+  $("st-drift").textContent = budget.lastActual === null
+    ? "尚无 API 用量"
+    : `${budget.lastActual}（估算 ${est}，偏${budget.lastActual >= est ? "大" : "小"} ${Math.abs(budget.lastActual - est)}）`;
+
+  $("bar-fill").style.width = pct + "%";
+  $("bar-threshold").style.left = thPct + "%";
+
+  // 会话内容
+  const log = $("log");
+  if (budget.messages.length === 0 && !budget.summary) log.innerHTML = '<span class="dim">（空）</span>';
+  else {
+    const parts = [];
+    if (budget.summary) parts.push(`<span class="sum">[摘要 ${budget.summary.tokens} token] ${esc(budget.summary.text)}</span>`);
+    for (const m of budget.messages) {
+      const cls = m.kind === "tool" ? "dim" : m.kind === "user" ? "ok" : "";
+      parts.push(`<span class="${cls}">${esc(m.label)}</span> (${m.tokens} t) ${esc(m.content.slice(0, 60))}${m.content.length > 60 ? "…" : ""}`);
+    }
+    log.innerHTML = parts.join("\n");
+  }
+
+  // 事件日志
+  $("events").innerHTML = budget.events.map((e) => esc(e)).join("\n");
+  $("st-changed").textContent = budget.events[budget.events.length - 1] ?? "—";
+
+  $("threshold-label").textContent = $("threshold").value + "%";
+  renderWalkthrough();
+}
+
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+// ---- 自由操作 ----
+$("window").addEventListener("change", () => reset("窗口已更改。"));
+$("threshold").addEventListener("input", () => reset("阈值已更改。"));
+$("strategy").addEventListener("change", () => reset("策略已更改。"));
+
+$("add-user").addEventListener("click", () => {
+  walkthrough = null;
+  const text = $("user-msg").value;
+  if (!text.trim()) return;
+  if (isCompactCommand(text)) {
+    compact(budget, `用户要求压缩。`);
+    budget.events.push("/compact 指令已处理，未发给模型。");
+  } else {
+    appendUser(budget, text);
+  }
+  render();
+});
+
+$("add-round").addEventListener("click", () => {
+  walkthrough = null;
+  appendRound(budget, PRESETS[$("round-preset").value]());
+  render();
+});
+
+$("decide").addEventListener("click", () => {
+  walkthrough = null;
+  const d = decide(budget);
+  budget.events.push(`[检查预算] → ${d.action === "compact" ? "⚠ 需要压缩" : "✓ 通过"}：${d.reason}`);
+  if (d.action === "compact") {
+    compact(budget, `（自动摘要：先前对话的要点保留）`);
+  }
+  render();
+});
+
+$("compact").addEventListener("click", () => {
+  walkthrough = null;
+  compact(budget, `（手动摘要：用户要求压缩后保留的要点）`);
+  render();
+});
+
+$("simulate-actual").addEventListener("click", () => {
+  walkthrough = null;
+  const est = currentEstimate(budget);
+  // 模拟 API 返回比估算大 25% 的真实用量
+  budget.lastActual = Math.floor(est * 1.25);
+  budget.events.push(`模拟 API 返回真实用量 ${budget.lastActual} token（估算 ${est}，偏大 25%）。`);
+  render();
+});
+
+$("reset").addEventListener("click", () => reset());
+
+// ---- 引导场景 ----
+const WALKTHROUGHS = {
+  normal: {
+    title: "1 · 正常对话不触发",
+    desc: "窗口 20K、阈值 80%。几条小消息远低于阈值——检查预算始终通过。",
+    setup: () => { budget = createBudget({ contextWindow: 20000, thresholdPct: 0.8, keepRounds: 2 }); },
+    steps: [
+      { label: "追加用户消息“请简单介绍这个项目”", run: () => appendUser(budget, "请简单介绍这个项目，200 字以内。") },
+      { label: "追加一个小工具回合", run: () => appendRound(budget, PRESETS.small()) },
+      { label: "检查预算（应通过）", run: () => { const d = decide(budget); budget.events.push(`[检查预算] → ${d.action}：${d.reason}`); } },
+    ],
+  },
+  climb: {
+    title: "2 · 长对话爬坡自动压缩",
+    desc: "窗口 20K、阈值 80%（16K）。连续追加大工具回合（300 行），估算很快越过阈值；发送前自动压缩（滚动摘要），估算回落到低位，对话继续。",
+    setup: () => { budget = createBudget({ contextWindow: 20000, thresholdPct: 0.8, keepRounds: 2 }); },
+    steps: [
+      { label: "追加 3 个大工具回合（read_file 300 行×3）", run: () => { for (let i = 0; i < 3; i++) appendRound(budget, PRESETS.big()); } },
+      { label: "检查预算（应触发自动压缩）", run: () => { const d = decide(budget); budget.events.push(`[检查预算] → ${d.action}：${d.reason}`); if (d.action === "compact") compact(budget, `（自动摘要：已阅读 900 行文件内容，要点已保留）`); } },
+      { label: "继续追加用户消息并检查（预算已回落）", run: () => { appendUser(budget, "基于刚才读到的内容，修复那个 bug。"); const d = decide(budget); budget.events.push(`[检查预算] → ${d.action}：${d.reason}`); } },
+    ],
+  },
+  compact: {
+    title: "3 · /compact 强制压缩",
+    desc: "任何时候发 /compact：指令被剥离（不发给模型），历史立即压缩。",
+    setup: () => { budget = createBudget({ contextWindow: 20000, thresholdPct: 0.8, keepRounds: 2 }); },
+    steps: [
+      { label: "追加两个中等回合", run: () => { appendUser(budget, "帮我看看这个函数有什么问题。"); appendRound(budget, PRESETS.chat()); appendRound(budget, PRESETS.grep()); } },
+      { label: "用户发 /compact（强制压缩）", run: () => { compact(budget, `（手动摘要：审查过的问题与 grep 结论已保留）`); budget.events.push("/compact 指令已处理，未发给模型。"); } },
+    ],
+  },
+  toolheavy: {
+    title: "4 · 工具密集快速膨胀",
+    desc: "每次工具结果都很大（read_file 大块回喂）——固定开销和摘要帮不上忙，靠阈值触发滚动摘要把旧轮次压掉。",
+    setup: () => { budget = createBudget({ contextWindow: 20000, thresholdPct: 0.8, keepRounds: 1 }); },
+    steps: [
+      { label: "连续追加 5 个 300 行工具回合", run: () => { for (let i = 0; i < 5; i++) appendRound(budget, PRESETS.big()); } },
+      { label: "检查预算（自动压缩，保留最近 1 轮）", run: () => { const d = decide(budget); budget.events.push(`[检查预算] → ${d.action}：${d.reason}`); if (d.action === "compact") compact(budget, `（自动摘要：前 4 轮大块内容已压缩）`); } },
+    ],
+  },
+  boundary: {
+    title: "5 · 边界：刚好低于 vs 刚好高于",
+    desc: "阈值 = 窗口×百分比。估算恰好在阈值下方一条消息之差时：加上一条消息就翻转决策。",
+    setup: () => { budget = createBudget({ contextWindow: 2000, thresholdPct: 0.8, keepRounds: 2 }); },
+    steps: [
+      { label: "凑到接近阈值（剩余空间 < 一条小消息）", run: () => { let guard = 0; while (currentEstimate(budget) < budget.threshold - 150 && guard++ < 40) appendRound(budget, PRESETS.small()); budget.events.push(`当前估算 ${currentEstimate(budget)}，阈值 ${budget.threshold}（差 ${budget.threshold - currentEstimate(budget)}）。`); } },
+      { label: "再追加一条小消息 → 越过阈值", run: () => appendRound(budget, PRESETS.small()) },
+      { label: "检查预算（应触发压缩）", run: () => { const d = decide(budget); budget.events.push(`[检查预算] → ${d.action}：${d.reason}`); if (d.action === "compact") compact(budget, `（自动摘要）`); } },
+    ],
+  },
+  drift: {
+    title: "6 · 估算漂移校准",
+    desc: "API 返回的真实用量比估算大（模拟 +25%）。即使当前估算低于阈值，只要实际用量超阈值，下一轮仍压缩——防止估算偏小把上下文撑爆。",
+    setup: () => { budget = createBudget({ contextWindow: 20000, thresholdPct: 0.8, keepRounds: 2 }); },
+    steps: [
+      { label: "追加两个大工具回合（估算应略低于阈值）", run: () => { appendRound(budget, PRESETS.big()); appendRound(budget, PRESETS.big()); budget.events.push(`估算 ${currentEstimate(budget)}，阈值 ${budget.threshold}。`); } },
+      { label: "模拟 API 返回实际用量（+25%）", run: () => { const est = currentEstimate(budget); budget.lastActual = Math.floor(est * 1.25); budget.events.push(`API 实际用量 ${budget.lastActual}（估算 ${est}）。`); } },
+      { label: "检查预算（按实际用量触发压缩）", run: () => { const d = decide(budget); budget.events.push(`[检查预算] → ${d.action}：${d.reason}`); if (d.action === "compact") compact(budget, `（自动摘要：按实际用量校准）`); } },
+    ],
+  },
+};
+
+function renderWalkthrough() {
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  Object.entries(WALKTHROUGHS).forEach(([id, w]) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (walkthrough === id ? " active" : "");
+    b.textContent = w.title;
+    b.addEventListener("click", () => {
+      reset(`开始引导场景：${w.title}`);
+      w.setup();
+      walkthrough = id;
+      walkthroughStep = 0;
+      render();
+    });
+    tabs.appendChild(b);
+  });
+
+  $("walk-desc").textContent = "";
+  $("walk-steps").innerHTML = "";
+  if (!walkthrough) {
+    $("walk-desc").textContent = "点标签选一个场景。每个场景先重置并设定自己的窗口/阈值，再一步步走。";
+    return;
+  }
+
+  const w = WALKTHROUGHS[walkthrough];
+  $("walk-desc").textContent = w.desc;
+  const wrap = $("walk-steps");
+  w.steps.forEach((step, i) => {
+    const done = i < walkthroughStep;
+    const row = document.createElement("div");
+    row.className = "step" + (done ? " done" : "");
+    const btn = document.createElement("button");
+    btn.innerHTML = `<span class="num">${i + 1}</span>${step.label}`;
+    btn.disabled = i !== walkthroughStep;
+    btn.addEventListener("click", () => {
+      step.run();
+      walkthroughStep = i + 1;
+      render();
+    });
+    row.appendChild(btn);
+    if (done) { const n = document.createElement("div"); n.className = "note"; n.textContent = "✓ 已完成"; row.appendChild(n); }
+    wrap.appendChild(row);
+  });
+
+  if (walkthroughStep >= w.steps.length) {
+    const banner = document.createElement("div");
+    banner.className = "done-banner";
+    banner.textContent = "✓ 场景完成——看预算条和事件日志，这个设计点成立吗？";
+    wrap.appendChild(banner);
+  }
+}
+
+reset();
+</script>
+</body>
+</html>
