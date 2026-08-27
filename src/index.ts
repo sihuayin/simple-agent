@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   const result = await runAgent({
     adapter,
     model,
-    systemPrompt: buildSystemPrompt(),
+    systemPrompt: await buildSystemPrompt(process.cwd()),
     userPrompt: prompt,
     tools: toolSpecs(),
     toolContext: { workspace: process.cwd(), cwd: process.cwd(), env: process.env },

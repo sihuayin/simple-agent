@@ -53,6 +53,7 @@ Tools are always available and the model decides whether to call them; when it d
 - Tool errors are fed back to the model as results (it can recover), not crashes.
 - File tools are confined to the workspace; paths escaping it are rejected. `bash` is **not** sandboxed (a safety policy is a later requirement).
 - `--verbose` prints provider, model, iteration count, and tool-call count to stderr.
+- The system prompt is layered (role → rules → project `AGENTS.md`), stable-first so providers' prefix caches hit — see `docs/adr/0001-layered-system-prompt.md`.
 
 Exit codes: `0` success, `1` runtime/API error or aborted agent loop, `2` usage error.
 
