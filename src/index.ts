@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 import "dotenv/config";
 
-import { createClient } from "./client.js";
+import { createAdapter, MissingApiKeyError } from "./adapters/client.js";
+import { resolveModel, resolveProvider, UnknownProviderError } from "./adapters/resolve.js";
 import {
   CliUsageError,
   formatResult,
   helpText,
   parseArgs,
   readPrompt,
-  resolveModel,
   versionText,
 } from "./cli.js";
-import { MissingApiKeyError, runConversation } from "./conversation.js";
+import { runConversation } from "./conversation.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -25,8 +25,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  const model = resolveModel(args.model);
-  const client = createClient();
+  const provider = resolveProvider(args.provider);
+  const adapter = createAdapter(provider);
+  const model = resolveModel(provider, args.model);
 
   const prompt = await readPrompt(args.prompt);
   if (!prompt.trim()) {
@@ -36,14 +37,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  const result = await runConversation({ client, model, prompt });
+  const result = await runConversation({ adapter, model, prompt });
   const { stdout, stderr } = formatResult(result, { verbose: args.verbose });
   process.stdout.write(stdout);
   if (stderr) process.stderr.write(stderr);
 }
 
 main().catch((err: unknown) => {
-  if (err instanceof CliUsageError) {
+  if (err instanceof CliUsageError || err instanceof UnknownProviderError) {
     process.stderr.write(`${err.message}\n\n`);
     process.stderr.write(helpText());
     process.exitCode = 2;

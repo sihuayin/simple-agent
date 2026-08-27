@@ -1,69 +1,24 @@
-/**
- * The minimal client surface the conversation logic needs.
- * `OpenAI` satisfies this structurally; tests can pass a fake.
- */
-export interface ChatCompletionsLike {
-  create(params: {
-    model: string;
-    messages: { role: "user" | "assistant" | "system"; content: string }[];
-    stream: false;
-  }): Promise<{
-    model: string;
-    choices: { message: { content: string | null } }[];
-    usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null;
-  }>;
-}
+import { normalizeResponse } from "./adapters/normalize.js";
+import type { ConversationResult, ProviderAdapter } from "./adapters/types.js";
 
-export interface ChatClient {
-  chat: { completions: ChatCompletionsLike };
-}
+export type { ConversationResult } from "./adapters/types.js";
 
 export interface RunConversationInput {
-  client: ChatClient;
+  adapter: ProviderAdapter;
   model: string;
   prompt: string;
 }
 
-export interface ConversationResult {
-  content: string | null;
-  model: string;
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
-}
-
-export class MissingApiKeyError extends Error {
-  constructor() {
-    super(
-      "Missing DEEPSEEK_API_KEY. Set it in your environment or a .env file (see .env.example).",
-    );
-    this.name = "MissingApiKeyError";
-  }
-}
-
 /**
- * Send one user message to the model and return the response.
- * Pure of I/O beyond the injected client, so it is trivially testable.
+ * Send one user message through the provider adapter and normalize the
+ * provider-specific raw response. Pure of I/O beyond the injected adapter,
+ * which is the single test seam.
  */
 export async function runConversation({
-  client,
+  adapter,
   model,
   prompt,
 }: RunConversationInput): Promise<ConversationResult> {
-  const completion = await client.chat.completions.create({
-    model,
-    messages: [{ role: "user", content: prompt }],
-    stream: false,
-  });
-
-  const usage = completion.usage;
-  return {
-    content: completion.choices[0]?.message.content ?? null,
-    model: completion.model,
-    usage: usage
-      ? {
-          promptTokens: usage.prompt_tokens,
-          completionTokens: usage.completion_tokens,
-          totalTokens: usage.total_tokens,
-        }
-      : undefined,
-  };
+  const raw = await adapter.send({ model, prompt });
+  return normalizeResponse(adapter.info.id, raw);
 }

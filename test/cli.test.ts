@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CliUsageError, parseArgs, resolveModel } from "../src/cli.js";
-import { DEFAULT_MODEL } from "../src/config.js";
+import { CliUsageError, parseArgs } from "../src/cli.js";
 
 describe("parseArgs", () => {
   it("collects a positional prompt", () => {
@@ -22,6 +21,11 @@ describe("parseArgs", () => {
     expect(parseArgs(["--model=deepseek-v4-pro"]).model).toBe("deepseek-v4-pro");
   });
 
+  it("parses --provider with a separate value and =value form", () => {
+    expect(parseArgs(["--provider", "claude"]).provider).toBe("claude");
+    expect(parseArgs(["--provider=claude"]).provider).toBe("claude");
+  });
+
   it("parses --help and -h", () => {
     expect(parseArgs(["--help"]).help).toBe(true);
     expect(parseArgs(["-h"]).help).toBe(true);
@@ -35,6 +39,11 @@ describe("parseArgs", () => {
     expect(parseArgs(["--verbose"]).verbose).toBe(true);
   });
 
+  it("leaves prompt undefined when no positional is given (so stdin is used)", () => {
+    expect(parseArgs(["--verbose"]).prompt).toBeUndefined();
+    expect(parseArgs([]).prompt).toBeUndefined();
+  });
+
   it("rejects an unknown flag", () => {
     expect(() => parseArgs(["--bogus"])).toThrow(CliUsageError);
   });
@@ -42,25 +51,8 @@ describe("parseArgs", () => {
   it("rejects --model without a value", () => {
     expect(() => parseArgs(["--model"])).toThrow(CliUsageError);
   });
-});
 
-describe("resolveModel", () => {
-  it("flag wins over the environment default", () => {
-    expect(resolveModel("deepseek-v4-pro", { DEEPSEEK_MODEL: "deepseek-chat" })).toBe(
-      "deepseek-v4-pro",
-    );
-  });
-
-  it("uses the environment default when no flag is given", () => {
-    expect(resolveModel(undefined, { DEEPSEEK_MODEL: "deepseek-chat" })).toBe("deepseek-chat");
-  });
-
-  it("falls back to the built-in default when neither is set", () => {
-    expect(resolveModel(undefined, {})).toBe(DEFAULT_MODEL);
-  });
-
-  it("treats an empty or whitespace-only env value as unset", () => {
-    expect(resolveModel(undefined, { DEEPSEEK_MODEL: "" })).toBe(DEFAULT_MODEL);
-    expect(resolveModel(undefined, { DEEPSEEK_MODEL: "   " })).toBe(DEFAULT_MODEL);
+  it("rejects --provider without a value", () => {
+    expect(() => parseArgs(["--provider"])).toThrow(CliUsageError);
   });
 });

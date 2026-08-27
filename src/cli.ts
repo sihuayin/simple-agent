@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { stdin } from "node:process";
 import readline from "node:readline/promises";
 
-import { DEFAULT_MODEL } from "./config.js";
+import { PROVIDERS } from "./adapters/providers.js";
 import type { ConversationResult } from "./conversation.js";
 
 export interface CliArgs {
   prompt: string | undefined;
+  provider: string | undefined;
   model: string | undefined;
   verbose: boolean;
   help: boolean;
@@ -16,6 +17,7 @@ export interface CliArgs {
 export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     prompt: undefined,
+    provider: undefined,
     model: undefined,
     verbose: false,
     help: false,
@@ -28,7 +30,13 @@ export function parseArgs(argv: string[]): CliArgs {
     if (arg === "--help" || arg === "-h") args.help = true;
     else if (arg === "--version") args.version = true;
     else if (arg === "--verbose") args.verbose = true;
-    else if (arg === "--model") {
+    else if (arg === "--provider") {
+      const value = argv[++i];
+      if (!value) throw new CliUsageError("--provider requires a value");
+      args.provider = value;
+    } else if (arg.startsWith("--provider=")) {
+      args.provider = arg.slice("--provider=".length);
+    } else if (arg === "--model") {
       const value = argv[++i];
       if (!value) throw new CliUsageError("--model requires a value");
       args.model = value;
@@ -41,7 +49,7 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  args.prompt = positionals.join(" ");
+  args.prompt = positionals.length > 0 ? positionals.join(" ") : undefined;
   return args;
 }
 
@@ -50,15 +58,6 @@ export class CliUsageError extends Error {
     super(message);
     this.name = "CliUsageError";
   }
-}
-
-/** Precedence: --model flag > DEEPSEEK_MODEL env > built-in default. */
-export function resolveModel(
-  flag: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const envModel = env.DEEPSEEK_MODEL?.trim();
-  return flag ?? (envModel ? envModel : DEFAULT_MODEL);
 }
 
 /** Positional prompt first; else piped stdin; else an interactive TTY prompt. */
@@ -113,22 +112,27 @@ export function formatResult(
 }
 
 export function helpText(): string {
-  return `simple-agent — one-shot DeepSeek conversation
+  return `simple-agent — one-shot LLM conversation
 
 Usage:
   simple-agent [options] [prompt]
   echo "..." | simple-agent [options]
 
 Options:
-  --model <name>   Model to use (default: $DEEPSEEK_MODEL or ${DEFAULT_MODEL})
+  --provider <id>  Provider: ${Object.keys(PROVIDERS).join(" | ")} (default: $LLM_PROVIDER or ${PROVIDERS.deepseek.id})
+  --model <name>   Model (default: $<PROVIDER>_MODEL or the provider's default, e.g. ${PROVIDERS.deepseek.defaultModel})
   --verbose        Print model and token usage to stderr
   -h, --help       Show this help
   --version        Print the version
 
 Environment:
-  DEEPSEEK_API_KEY    required — API key (or put it in .env)
-  DEEPSEEK_MODEL      default model
-  DEEPSEEK_BASE_URL   API base URL (default: https://api.deepseek.com)
+  DEEPSEEK_API_KEY        required for provider "deepseek" (or put it in .env)
+  ANTHROPIC_API_KEY       required for provider "claude" (or put it in .env)
+  LLM_PROVIDER            default provider
+  DEEPSEEK_MODEL          default model for deepseek
+  ANTHROPIC_MODEL         default model for claude
+  DEEPSEEK_BASE_URL       API base URL for deepseek
+  ANTHROPIC_BASE_URL      API base URL for claude
 `;
 }
 
