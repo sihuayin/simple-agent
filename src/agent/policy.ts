@@ -156,21 +156,25 @@ function describeCandidate(c: ToolCandidate): string {
   return c.tool === "bash" ? `命令 ${JSON.stringify(c.command)}` : `${c.tool}(${JSON.stringify(c.path ?? "")})`;
 }
 
+function reasonFor(decision: PolicyDecision): string {
+  if (decision.rule) {
+    return `（规则：${decision.rule.pattern ?? decision.rule.tool}${decision.overridden ? "；且目标路径命中受保护列表" : ""}）`;
+  }
+  return "（未命中任何规则——兜底）";
+}
+
 export function policyFeedbackMessage(decision: PolicyDecision, candidate: ToolCandidate): string {
   const what = describeCandidate(candidate);
   if (decision.action === "deny") {
     const r = decision.rule;
     return `[permission denied] ${what} 被安全策略阻止（Deny：${r?.pattern ?? r?.tool}）。不要尝试绕过；如确需此操作，请在最终回答中向用户说明。`;
   }
-  const why = decision.rule
-    ? `（规则：${decision.rule.pattern ?? decision.rule.tool}${decision.overridden ? "；且目标路径命中受保护列表" : ""}）`
-    : "（未命中任何规则——兜底）";
-  return `[permission required] ${what} 需要人类确认${why}。请在最终回答中向用户说明或给出替代方案。`;
+  return `[permission required] ${what} 需要人类确认${reasonFor(decision)}。请在最终回答中向用户说明或给出替代方案。`;
 }
 
-/** ask 被用户明确拒绝时的反馈。 */
-export function askRejectedMessage(candidate: ToolCandidate): string {
-  return `[permission denied by user] ${describeCandidate(candidate)} 未获确认，未执行。请在最终回答中向用户说明。`;
+/** ask 被用户明确拒绝时的反馈（带原因，模型才能向用户解释）。 */
+export function askRejectedMessage(decision: PolicyDecision, candidate: ToolCandidate): string {
+  return `[permission denied by user] ${describeCandidate(candidate)} 未获确认，未执行${reasonFor(decision)}。请在最终回答中向用户说明。`;
 }
 
 // ---------- 规则加载：内置默认 + 工作区 .rules ----------

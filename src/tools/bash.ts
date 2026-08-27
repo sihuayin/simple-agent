@@ -8,7 +8,7 @@ const OUTPUT_CAP = 8000;
 export const bashTool: ToolEntry = {
   name: "bash",
   description:
-    "Execute a shell command in the workspace directory and return its stdout/stderr. Prefer the purpose-built tools (read_file, grep, glob, list_files) for file operations; bash can perform destructive or network actions — use it deliberately. Output is capped at 8000 characters.",
+    "Execute a shell command in the workspace directory and return its stdout/stderr. Commands are checked by a security policy: destructive commands (rm -rf /, dd, download-and-run) are blocked, and risky commands or file writes require human confirmation — if a call comes back as [permission denied] or [permission required], do not rephrase and retry; explain the need in your final answer instead. Prefer the purpose-built tools (read_file, grep, glob, list_files) for file operations. Output is capped at 8000 characters.",
   parameters: {
     type: "object",
     properties: {

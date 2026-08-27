@@ -110,8 +110,11 @@ describe("feedback messages", () => {
     expect(msg).toContain("兜底");
   });
 
-  it("user rejection has its own message", () => {
-    expect(askRejectedMessage({ tool: "bash", command: "git push --force x" })).toContain("[permission denied by user]");
+  it("user rejection includes the reason so the model can explain", () => {
+    const msg = askRejectedMessage(bash("git push --force x"), { tool: "bash", command: "git push --force x" });
+    expect(msg).toContain("[permission denied by user]");
+    expect(msg).toContain("git push --force");
+    expect(msg).toContain("git push --force*"); // 规则原因
   });
 });
 

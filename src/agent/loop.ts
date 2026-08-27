@@ -185,7 +185,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
         content = policyFeedbackMessage(decision, candidate);
       } else if (decision.action === "ask") {
         const allowed = await ask(policyFeedbackMessage(decision, candidate));
-        content = allowed ? await execute() : askRejectedMessage(candidate);
+        content = allowed ? await execute() : askRejectedMessage(decision, candidate);
       } else {
         content = await execute();
       }
