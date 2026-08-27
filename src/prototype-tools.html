@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型：Agent 工具循环（7 个工具 + 分页读文件）</title>
+<style>
+  :root {
+    --accent: #0d9488; --accent-soft: #f0fdfa; --accent-border: #99f6e4;
+    --ink: #1e293b; --muted: #64748b; --border: #e2e8f0;
+    --ok: #059669; --err: #dc2626; --warn: #b45309;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); margin: 0; background: #f8fafc; line-height: 1.6; }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 32px 20px 90px; }
+  header h1 { font-size: 22px; margin: 0 0 6px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 999px; padding: 2px 10px; margin-bottom: 10px; }
+  .question { background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; font-size: 13.5px; margin: 10px 0 20px; }
+  section { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; }
+  .pill.awaiting { background: var(--accent-soft); color: var(--accent); }
+  .pill.done { background: #ecfdf5; color: var(--ok); }
+  .pill.aborted { background: #fef2f2; color: var(--err); }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 3px 12px; font-size: 14px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-weight: 500; }
+  .callout { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
+  .log { font-family: var(--mono); font-size: 12px; max-height: 340px; overflow-y: auto; background: #0f172a; color: #cbd5e1; border-radius: 8px; padding: 12px; white-space: pre-wrap; word-break: break-word; }
+  .log .role { font-weight: 700; }
+  .log .ok { color: #6ee7b7; } .log .err { color: #fca5a5; } .log .dim { color: #64748b; }
+  .fs { font-family: var(--mono); font-size: 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; max-height: 340px; overflow-y: auto; white-space: pre; }
+  .fs .dir { color: var(--accent); font-weight: 700; }
+  .controls { display: flex; flex-direction: column; gap: 10px; }
+  .ctl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+  .lbl { color: var(--muted); min-width: 120px; font-family: var(--mono); font-size: 12.5px; }
+  button { font: inherit; font-size: 13px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--ink); border-radius: 6px; padding: 4px 11px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 6px 16px; }
+  button.primary:hover { background: #0f766e; }
+  button.warn:hover { border-color: var(--err); color: var(--err); }
+  input[type=text], select { font: inherit; font-family: var(--mono); font-size: 12.5px; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  input[type=text]:focus, select:focus { outline: none; border-color: var(--accent); }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tab { border-radius: 999px; padding: 4px 12px; font-size: 12.5px; }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .walk-desc { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .step { margin: 8px 0; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .step .num { display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); text-align: center; font-size: 12px; font-weight: 700; line-height: 22px; margin-right: 8px; }
+  .step.done .num { background: var(--ok); color: #fff; }
+  .step.done { border-color: #bbf7d0; background: #f0fdf4; }
+  .step .note { color: var(--muted); font-size: 12px; margin-left: 30px; }
+  .done-banner { color: var(--ok); font-weight: 600; font-size: 13.5px; margin-top: 8px; }
+  .toolgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin-top: 10px; }
+  .toolcard { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+  .toolcard b { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .toolcard p { margin: 4px 0 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="badge">原型 PROTOTYPE · 逻辑验证</span>
+  <h1>Agent 工具循环：7 个工具 + 分页读文件</h1>
+  <div class="question">
+    <strong>要回答的问题：</strong>把 CLI 从"一次对话"升级成"会用工具的 agent"时，这套循环逻辑和这 7 个工具的契约对不对？
+    循环是：模型返回 tool_use → CLI 执行工具 → 结果回喂给模型 → 直到模型给出最终文本。
+    模拟器里有一个虚拟文件系统和一个"模拟模型"——你扮演模型决定它下一步请求哪个工具，观察循环怎么推进、怎么处理错误、怎么被截断。
+    <br><br>
+    <strong>设计约定（要验证的）</strong>：① 工具执行出错时，错误作为 tool_result 回喂给模型（让它自己恢复），而不是让 CLI 崩溃；② 迭代上限（默认 10 次）防止模型无限调工具；③ 工具结果上限 8000 字符，超出截断并标记；④ <b>read_file 分页</b>：用 offset/maxLines 控制每次读取长度，剩余内容用 <code>[TRUNCATED]</code> 标记提示下一段从哪里读；⑤ 归一化的 tool_use/tool_result 隐藏两家提供方的协议差异（DeepSeek 的 tool_calls ↔ Claude 的 tool_use——由适配层负责翻译）。<br>
+    <strong>开放决策</strong>：bash 工具的沙箱策略（模拟器里 <code>rm -rf</code> 会被拒绝，真实 CLI 要不要 allowlist / 确认？）。
+  </div>
+</header>
+
+<section>
+  <h2>当前状态</h2>
+  <dl class="kv">
+    <dt>循环阶段</dt><dd><span id="st-phase" class="pill awaiting">awaiting-model</span></dd>
+    <dt>迭代次数</dt><dd id="st-iter">0 / 10</dd>
+    <dt>消息条数</dt><dd id="st-msgs">0</dd>
+    <dt>刚发生</dt><dd id="st-changed" style="font-weight:400">初始状态：模拟模型还没说过话。</dd>
+  </dl>
+</section>
+
+<div class="two-col">
+  <section style="margin-bottom:16px">
+    <h2>对话日志（消息流）</h2>
+    <div class="log" id="log">（空）</div>
+  </section>
+  <section style="margin-bottom:16px">
+    <h2>虚拟文件系统</h2>
+    <div class="fs" id="fs"></div>
+    <div style="font-size:12px;color:var(--muted);margin-top:6px">write_file / edit_file 的改动会实时反映在这里。</div>
+  </section>
+</div>
+
+<section>
+  <h2>自由操作（模拟模型下一步做什么）</h2>
+  <div class="controls">
+    <div class="ctl-row">
+      <span class="lbl">请求工具</span>
+      <select id="tool-select"></select>
+      <span id="param-area"></span>
+      <button id="fire-tool" class="primary">模型请求该工具</button>
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">结束回合</span>
+      <button id="final-answer">模型给出最终回答</button>
+      <button id="reset" class="warn">重置（新循环 + 新文件系统）</button>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>引导场景</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="walk-desc" id="walk-desc"></div>
+  <div id="walk-steps"></div>
+</section>
+
+<section>
+  <h2>工具契约（模型会看到的 description）</h2>
+  <div class="toolgrid" id="toolgrid"></div>
+</section>
+
+</div>
+
+<!-- ================================================================
+     纯逻辑模块（可整体搬进真实代码库，如 src/tools/ + src/agent/）：
+     不引用任何 DOM。页面只负责调用。
+     ================================================================ -->
+<script id="tools-module">
+"use strict";
+
+// ---------- 虚拟文件系统 ----------
+function createVirtualFS() {
+  const longLog = Array.from({ length: 100 }, (_, i) => `line ${String(i + 1).padStart(3, "0")}: event ${i + 1} logged`).join("\n");
+  const files = {
+    "README.md": "# simple-agent\n\nOne-shot conversation CLI with tools.\n\n## Usage\n\npnpm dev \"prompt\"",
+    "notes.txt": "remember: paginate long reads with offset/maxLines.\nTODO: add a system prompt option.",
+    "src/app.ts": 'export function main() {\n  console.log("hello");\n}\n\n// TODO: wire tools into the loop',
+    "long-log.txt": longLog,
+  };
+  return {
+    read(path) { return files[path]; },
+    write(path, content) { files[path] = content; return true; },
+    paths() { return Object.keys(files).sort(); },
+    tree() {
+      const out = [];
+      for (const p of Object.keys(files).sort()) {
+        const parts = p.split("/");
+        for (let i = 0; i < parts.length; i++) {
+          const dir = parts.slice(0, i + 1).join("/");
+          const isFile = i === parts.length - 1;
+          const key = isFile ? p : dir + "/";
+          if (!out.includes(key)) out.push(key);
+        }
+      }
+      return out.sort();
+    },
+    contents() { return files; },
+  };
+}
+
+// ---------- 工具注册表（description 就是模型看到的契约） ----------
+const TOOLS = {
+  read_file: {
+    name: "read_file",
+    description: "Read a text file from the workspace. Control response length: pass maxLines to cap each read and offset to continue from a later line; when the result contains the [TRUNCATED] marker, call again with the suggested offset to read the next chunk. Prefer this over bash cat for reading.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File path relative to the workspace root, e.g. \"src/app.ts\"." },
+        offset: { type: "number", description: "1-based line to start reading from (default 1)." },
+        maxLines: { type: "number", description: "Maximum lines to return in this call (default 200, max 1000)." },
+      },
+      required: ["path"],
+    },
+    execute(input, fs) {
+      const content = fs.read(input.path);
+      if (content === undefined) throw new ToolExecutionError(`read_file: no such file: ${input.path}`);
+      return readChunk(content, input.offset ?? 1, Math.min(input.maxLines ?? 200, 1000));
+    },
+  },
+
+  write_file: {
+    name: "write_file",
+    description: "Create or overwrite a file with the given content. Overwrites existing files entirely — use edit_file for surgical changes. Returns a short confirmation.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File path relative to the workspace root." },
+        content: { type: "string", description: "Full new content of the file." },
+      },
+      required: ["path", "content"],
+    },
+    execute(input, fs) {
+      fs.write(input.path, input.content);
+      return `write_file: wrote ${input.content.split("\n").length} line(s) to ${input.path}`;
+    },
+  },
+
+  edit_file: {
+    name: "edit_file",
+    description: "Make precise edits to a file by replacing exact text. Provide one or more edits; each oldText must match exactly (a unique region) in the file, otherwise the whole call fails and no edit is applied. Prefer the smallest oldText that captures your intent.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File path relative to the workspace root." },
+        edits: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              oldText: { type: "string", description: "Exact existing text to replace (must match exactly)." },
+              newText: { type: "string", description: "Replacement text." },
+            },
+            required: ["oldText", "newText"],
+          },
+        },
+      },
+      required: ["path", "edits"],
+    },
+    execute(input, fs) {
+      const original = fs.read(input.path);
+      if (original === undefined) throw new ToolExecutionError(`edit_file: no such file: ${input.path}`);
+      let text = original;
+      for (const e of input.edits ?? []) {
+        if (!text.includes(e.oldText)) {
+          throw new ToolExecutionError(`edit_file: oldText not found in ${input.path}: ${JSON.stringify(e.oldText)}`);
+        }
+        text = text.replace(e.oldText, e.newText);
+      }
+      fs.write(input.path, text);
+      return `edit_file: applied ${input.edits.length} edit(s) to ${input.path}`;
+    },
+  },
+
+  grep: {
+    name: "grep",
+    description: "Search file contents for a regex pattern. Returns matching lines with file path and line number, capped at maxResults. Useful to locate where something is mentioned before reading the file.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "JavaScript regular expression to search for." },
+        path: { type: "string", description: "Directory or single file to search; defaults to the workspace root." },
+        maxResults: { type: "number", description: "Maximum matches to return (default 50)." },
+      },
+      required: ["pattern"],
+    },
+    execute(input, fs) {
+      let re;
+      try { re = new RegExp(input.pattern); } catch (e) { throw new ToolExecutionError(`grep: invalid pattern: ${e.message}`); }
+      const max = input.maxResults ?? 50;
+      const results = [];
+      const scope = input.path ?? ".";
+      for (const [path, content] of Object.entries(fs.contents())) {
+        if (!path.startsWith(scope.replace(/\/$/, "")) && scope !== ".") continue;
+        content.split("\n").forEach((line, i) => {
+          if (results.length >= max) return;
+          if (re.test(line)) results.push(`${path}:${i + 1}: ${line.trim()}`);
+        });
+      }
+      return results.length ? results.join("\n") : `grep: no matches for /${input.pattern}/`;
+    },
+  },
+
+  glob: {
+    name: "glob",
+    description: "Find file paths matching a glob pattern (e.g. \"src/**/*.ts\"). Returns matching paths, one per line. Use it to locate files before read_file.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: { type: "string", description: "Glob pattern, relative to the workspace root. Supports * and **." },
+      },
+      required: ["pattern"],
+    },
+    execute(input, fs) {
+      const rx = new RegExp("^" + input.pattern.split("/").map((seg) =>
+        seg === "**" ? ".*" : seg.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")
+      ).join("/") + "$");
+      const hits = fs.paths().filter((p) => rx.test(p));
+      return hits.length ? hits.join("\n") : `glob: no files match ${input.pattern}`;
+    },
+  },
+
+  bash: {
+    name: "bash",
+    description: "Execute a shell command in the workspace directory and return its stdout/stderr. Prefer the purpose-built tools (read_file, grep, glob, list_files) for file operations; bash can perform destructive or network actions — use it deliberately. Output is capped at 8000 characters.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "The shell command to run." },
+        timeoutSeconds: { type: "number", description: "Timeout in seconds (default 30)." },
+      },
+      required: ["command"],
+    },
+    execute(input, fs) {
+      return runVirtualBash(input.command, fs);
+    },
+  },
+
+  list_files: {
+    name: "list_files",
+    description: "List the entries in a directory. Non-recursive by default; set recursive to true to traverse subdirectories. Directories are shown with a trailing slash. Use it to get an overview before reading.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Directory to list (default: workspace root)." },
+        recursive: { type: "boolean", description: "List subdirectories recursively (default false)." },
+      },
+      required: [],
+    },
+    execute(input, fs) {
+      const base = (input.path ?? ".").replace(/\/$/, "") || ".";
+      const all = fs.tree();
+      const lines = all
+        .filter((p) => p === base || p.startsWith(base === "." ? "" : base + "/"))
+        .map((p) => p.replace(base === "." ? "" : base + "/", ""))
+        .filter(Boolean);
+      const filtered = input.recursive ? lines : lines.filter((p) => !p.includes("/"));
+      return filtered.length ? filtered.join("\n") : `list_files: nothing under ${base}`;
+    },
+  },
+};
+
+class ToolExecutionError extends Error {
+  constructor(message) { super(message); this.name = "ToolExecutionError"; }
+}
+
+// ---------- read_file 分页核心 ----------
+function readChunk(content, offset, maxLines) {
+  const lines = content.split("\n");
+  const start = Math.max(0, offset - 1);
+  const chunk = lines.slice(start, start + maxLines);
+  const hasMore = start + chunk.length < lines.length;
+  const nextOffset = start + chunk.length + 1;
+  const text = chunk.join("\n");
+  return hasMore
+    ? `${text}\n[TRUNCATED — ${lines.length} lines total; continue with offset=${nextOffset}]`
+    : text;
+}
+
+// ---------- 虚拟 bash（模拟常用命令；rm -rf 被沙箱拒绝） ----------
+function runVirtualBash(command, fs) {
+  const c = command.trim();
+  if (c.startsWith("rm -rf") || /rm\s+-rf/.test(c)) {
+    return "bash: permission denied — destructive command blocked by the prototype sandbox. (Real-CLI safety policy is an open decision.)";
+  }
+  if (/^ls\b/.test(c)) return fs.paths().map((p) => (p.includes("/") ? p.split("/").pop() : p)).join("\n");
+  if (/^cat\s+/.test(c)) {
+    const p = c.slice(4).trim(); const v = fs.read(p);
+    return v !== undefined ? v : `bash: cat: ${p}: No such file or directory`;
+  }
+  if (/^wc -l\s+/.test(c)) {
+    const p = c.slice(6).trim(); const v = fs.read(p);
+    return v !== undefined ? `${v.split("\n").length} ${p}` : `bash: wc: ${p}: No such file or directory`;
+  }
+  if (/^grep\s+/.test(c)) {
+    const parts = c.split(/\s+/);
+    const pattern = parts[1]; const p = parts[2];
+    const v = p ? fs.read(p) : Object.values(fs.contents()).join("\n");
+    if (v === undefined) return `bash: grep: ${p}: No such file or directory`;
+    const hits = v.split("\n").filter((l) => l.includes(pattern)).map((l) => l.trim());
+    return hits.length ? hits.join("\n") : "(no matches)";
+  }
+  if (/^pwd$/.test(c)) return "/workspace";
+  if (/^echo\b/.test(c)) return c.slice(5);
+  return `bash: "${c}" is not simulated in this prototype. (Simulated: ls, cat, wc -l, grep, pwd, echo)`;
+}
+
+// ---------- Agent 循环（状态机） ----------
+function createLoop(maxIterations = 10) {
+  return {
+    messages: [],          // {role:"user"|"assistant"|"tool", ...}
+    iterations: 0,
+    maxIterations,
+    phase: "awaiting-model", // awaiting-model | done | aborted
+    finalText: null,
+    abortReason: null,
+    lastAction: "新循环开始，等待模型输出。",
+  };
+}
+
+const TOOL_RESULT_CAP = 8000;
+
+/**
+ * 把"模型这一次的输出"应用到循环上。
+ * output: { kind:"final", text } | { kind:"tool_use", calls:[{id,name,input}] }
+ * 纯逻辑：文件系统由页面注入，以便自由操作与引导场景共用同一套循环。
+ */
+function applyModelOutput(state, fs, output) {
+  if (output.kind === "final") {
+    state.messages.push({ role: "assistant", text: output.text });
+    state.phase = "done";
+    state.finalText = output.text;
+    state.lastAction = "模型给出最终回答，循环结束。";
+    return;
+  }
+
+  state.messages.push({ role: "assistant", toolCalls: output.calls });
+
+  if (state.iterations >= state.maxIterations) {
+    state.phase = "aborted";
+    state.abortReason = `reached max iterations (${state.maxIterations}) without a final answer`;
+    state.lastAction = state.abortReason + "；本轮工具未执行。";
+    return;
+  }
+
+  for (const call of output.calls) {
+    const tool = TOOLS[call.name];
+    let result;
+    if (!tool) {
+      result = { isError: true, content: `Unknown tool: ${call.name}. Available: ${Object.keys(TOOLS).join(", ")}` };
+    } else {
+      try {
+        result = { isError: false, content: tool.execute(call.input, fs) };
+      } catch (e) {
+        result = { isError: true, content: e.message };
+      }
+    }
+    if (result.content.length > TOOL_RESULT_CAP) {
+      result.content = result.content.slice(0, TOOL_RESULT_CAP) + `\n[TOOL_RESULT_TRUNCATED — ${result.content.length} chars]`;
+    }
+    state.messages.push({ role: "tool", toolUseId: call.id, name: call.name, isError: result.isError, content: result.content });
+  }
+
+  state.iterations += 1;
+  state.phase = "awaiting-model";
+  state.lastAction = `模型请求了 ${output.calls.length} 个工具，已执行并回喂结果（迭代 ${state.iterations}）。`;
+}
+</script>
+
+<!-- 页面装配 -->
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+let state = createLoop(10);
+let vfs = createVirtualFS();
+let walkthrough = null;
+let walkthroughStep = 0;
+
+function reset(changeMsg) {
+  state = createLoop(10);
+  vfs = createVirtualFS();
+  walkthrough = null;
+  state.lastAction = changeMsg || "已重置：新循环 + 全新文件系统。";
+  render();
+}
+
+// ---- 工具自由操作参数 ----
+const PARAM_BUILDERS = {
+  read_file: () => `
+    <input type="text" id="p-path" list="fs-files" placeholder="path" value="README.md" style="width:130px">
+    <input type="text" id="p-offset" placeholder="offset(1)" style="width:80px">
+    <input type="text" id="p-maxLines" placeholder="maxLines(200)" style="width:110px">`,
+  write_file: () => `
+    <input type="text" id="p-path" list="fs-files" placeholder="path" value="out.txt" style="width:120px">
+    <input type="text" id="p-content" placeholder="content" style="width:220px">`,
+  edit_file: () => `
+    <input type="text" id="p-path" list="fs-files" placeholder="path" value="notes.txt" style="width:110px">
+    <input type="text" id="p-old" placeholder="oldText" style="width:150px">
+    <input type="text" id="p-new" placeholder="newText" style="width:150px">`,
+  grep: () => `
+    <input type="text" id="p-pattern" placeholder="pattern" value="TODO" style="width:120px">
+    <input type="text" id="p-path" placeholder="path(.)" style="width:90px">`,
+  glob: () => `
+    <input type="text" id="p-pattern" placeholder="pattern" value="src/**/*.ts" style="width:160px">`,
+  bash: () => `
+    <input type="text" id="p-command" placeholder="command" value="ls" style="width:260px">`,
+  list_files: () => `
+    <input type="text" id="p-path" placeholder="path(.)" style="width:110px">
+    <label style="font-size:12px"><input type="checkbox" id="p-rec"> 递归</label>`,
+};
+
+function toolInputs() {
+  const name = $("tool-select").value;
+  const tool = TOOLS[name];
+  const input = {};
+  if (name === "read_file") {
+    input.path = $("p-path").value;
+    if ($("p-offset").value) input.offset = Number($("p-offset").value);
+    if ($("p-maxLines").value) input.maxLines = Number($("p-maxLines").value);
+  } else if (name === "write_file") { input.path = $("p-path").value; input.content = $("p-content").value; }
+  else if (name === "edit_file") { input.path = $("p-path").value; input.edits = [{ oldText: $("p-old").value, newText: $("p-new").value }]; }
+  else if (name === "grep") { input.pattern = $("p-pattern").value; if ($("p-path").value) input.path = $("p-path").value; }
+  else if (name === "glob") { input.pattern = $("p-pattern").value; }
+  else if (name === "bash") { input.command = $("p-command").value; }
+  else if (name === "list_files") { if ($("p-path").value) input.path = $("p-path").value; input.recursive = $("p-rec").checked; }
+  return { input, tool };
+}
+
+function fireTool() {
+  const { input, tool } = toolInputs();
+  applyModelOutput(state, vfs, { kind: "tool_use", calls: [{ id: "tc-" + Date.now(), name: tool.name, input }] });
+  render();
+}
+
+// ---- 渲染 ----
+function render() {
+  const phasePill = $("st-phase");
+  phasePill.className = "pill " + state.phase;
+  phasePill.textContent = state.phase;
+  $("st-iter").textContent = `${state.iterations} / ${state.maxIterations}`;
+  $("st-msgs").textContent = state.messages.length;
+  $("st-changed").textContent = state.lastAction;
+
+  // 日志
+  const log = $("log");
+  if (state.messages.length === 0) { log.textContent = "（空）"; }
+  else {
+    log.innerHTML = state.messages.map((m) => {
+      if (m.role === "assistant" && m.text !== undefined) {
+        return `<span class="role">assistant</span> ${esc(m.text)}`;
+      }
+      if (m.role === "assistant") {
+        return m.toolCalls.map((c) =>
+          `<span class="role">assistant</span> tool_use <span class="ok">${c.name}</span> ${esc(JSON.stringify(c.input))}`
+        ).join("\n");
+      }
+      if (m.role === "tool") {
+        return `<span class="role">tool</span> <span class="${m.isError ? "err" : "ok"}">${esc(m.name)}${m.isError ? " ⚠ error" : ""}</span>\n${esc(m.content)}`;
+      }
+      return "";
+    }).join("\n\n");
+  }
+
+  // 文件系统树
+  $("fs").innerHTML = vfs.tree().map((p) =>
+    p.endsWith("/") ? `<span class="dir">${esc(p)}</span>` : esc(p)
+  ).join("\n");
+
+  // 工具选择器
+  const sel = $("tool-select");
+  if (sel.options.length === 0) {
+    Object.keys(TOOLS).forEach((n) => {
+      const o = document.createElement("option");
+      o.value = n; o.textContent = n;
+      sel.appendChild(o);
+    });
+  }
+  $("param-area").innerHTML = PARAM_BUILDERS[sel.value]();
+  const datalist = document.createElement("datalist");
+  datalist.id = "fs-files";
+  vfs.paths().forEach((p) => { const o = document.createElement("option"); o.value = p; datalist.appendChild(o); });
+  const oldDl = document.getElementById("fs-files");
+  if (oldDl) oldDl.remove();
+  document.body.appendChild(datalist);
+
+  renderToolCards();
+  renderWalkthrough();
+}
+
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+function renderToolCards() {
+  const g = $("toolgrid");
+  if (g.children.length) return;
+  Object.values(TOOLS).forEach((t) => {
+    const d = document.createElement("div");
+    d.className = "toolcard";
+    d.innerHTML = `<b>${t.name}</b><p>${esc(t.description)}</p>`;
+    g.appendChild(d);
+  });
+}
+
+// ---- 事件 ----
+$("tool-select").addEventListener("change", () => { $("param-area").innerHTML = PARAM_BUILDERS[$("tool-select").value](); });
+$("fire-tool").addEventListener("click", () => { walkthrough = null; fireTool(); });
+$("final-answer").addEventListener("click", () => {
+  walkthrough = null;
+  applyModelOutput(state, vfs, { kind: "final", text: "（模拟模型给出的最终回答：基于已读取的内容，任务完成。）" });
+  render();
+});
+$("reset").addEventListener("click", () => reset());
+
+// ---- 引导场景 ----
+function modelOutput(callsOrText) {
+  if (typeof callsOrText === "string") return { kind: "final", text: callsOrText };
+  return { kind: "tool_use", calls: callsOrText };
+}
+let callSeq = 0;
+const tc = () => "tc-" + (++callSeq);
+
+const WALKTHROUGHS = {
+  happy: {
+    title: "1 · 单工具 + 收尾",
+    desc: "模型只读一个小文件就给出最终回答。观察：tool_use 执行 → tool 结果回喂 → 模型给文本 → phase 变 done。",
+    steps: [
+      { label: "模型 read_file(\"README.md\")", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "read_file", input: { path: "README.md" } }])) },
+      { label: "模型给出最终回答", run: (s, fs) => applyModelOutput(s, fs, modelOutput("README 说这是一个 one-shot 对话 CLI，正在升级成带工具的 agent。")) },
+    ],
+  },
+  paginate: {
+    title: "2 · 长文件分页读取",
+    desc: "long-log.txt 有 100 行。模型第一次只读 10 行，得到 [TRUNCATED] 标记和下一个 offset；第二次按提示续读。这正是“控制读取长度、分多次读取”的约定。",
+    steps: [
+      { label: "模型 read_file(\"long-log.txt\", maxLines=10)", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "read_file", input: { path: "long-log.txt", maxLines: 10 } }])) },
+      { label: "模型按标记续读 offset=11", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "read_file", input: { path: "long-log.txt", offset: 11, maxLines: 10 } }])) },
+      { label: "模型给出最终回答（已读够）", run: (s, fs) => applyModelOutput(s, fs, modelOutput("日志前 20 行已读完，任务完成。")) },
+    ],
+  },
+  recover: {
+    title: "3 · 工具出错后恢复",
+    desc: "模型 edit_file 时 oldText 不匹配 → tool 结果带 ⚠ error 回喂 → 模型改用 read_file 成功。验证“错误回喂、不崩溃”的约定。",
+    steps: [
+      { label: "模型 edit_file(\"notes.txt\", oldText=\"不存在的文本\")", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "edit_file", input: { path: "notes.txt", edits: [{ oldText: "不存在的文本", newText: "x" }] } }])) },
+      { label: "模型改读 notes.txt", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "read_file", input: { path: "notes.txt" } }])) },
+      { label: "模型给出最终回答（吸取了教训）", run: (s, fs) => applyModelOutput(s, fs, modelOutput("旧文本没找到，我改成先读文件再编辑。")) },
+    ],
+  },
+  multi: {
+    title: "4 · 一回合多个工具",
+    desc: "模型在同一回合请求 grep + glob 两个工具。验证：一次输出里多个 tool_use，逐个执行、逐个回喂。",
+    steps: [
+      { label: "模型同回合请求 grep(\"TODO\") + glob(\"src/*.ts\")", run: (s, fs) => applyModelOutput(s, fs, modelOutput([
+        { id: tc(), name: "grep", input: { pattern: "TODO" } },
+        { id: tc(), name: "glob", input: { pattern: "src/*.ts" } },
+      ])) },
+      { label: "模型给出最终回答", run: (s, fs) => applyModelOutput(s, fs, modelOutput("找到了 2 处 TODO 和 1 个 ts 文件。")) },
+    ],
+  },
+  maxiter: {
+    title: "5 · 迭代上限",
+    desc: "把上限压到 3 次。模型连续请求工具——第 4 次请求时循环中止（aborted），且这一轮的工具不会执行。",
+    steps: [
+      { label: "（先启动一个 maxIterations=3 的循环）", run: (s) => { s.maxIterations = 3; s.lastAction = "循环上限设为 3。"; } },
+      { label: "模型第 1 次请求工具", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "list_files", input: {} }])) },
+      { label: "模型第 2 次请求工具", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "list_files", input: {} }])) },
+      { label: "模型第 3 次请求工具", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "list_files", input: {} }])) },
+      { label: "模型第 4 次请求工具（应中止）", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "list_files", input: {} }])) },
+    ],
+  },
+  bash: {
+    title: "6 · bash 与沙箱",
+    desc: "bash 能执行 ls；破坏性命令 rm -rf 被模拟沙箱拒绝。这是原型留的开放决策：真实 CLI 要不要 allowlist / 确认？",
+    steps: [
+      { label: "模型 bash(\"ls\")", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "bash", input: { command: "ls" } }])) },
+      { label: "模型 bash(\"rm -rf /\")（应被沙箱拒绝）", run: (s, fs) => applyModelOutput(s, fs, modelOutput([{ id: tc(), name: "bash", input: { command: "rm -rf /" } }])) },
+      { label: "模型给出最终回答", run: (s, fs) => applyModelOutput(s, fs, modelOutput("破坏性命令被拦住了，这个安全边界保留。")) },
+    ],
+  },
+};
+
+function renderWalkthrough() {
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  Object.entries(WALKTHROUGHS).forEach(([id, w]) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (walkthrough === id ? " active" : "");
+    b.textContent = w.title;
+    b.addEventListener("click", () => {
+      reset(`开始引导场景：${w.title}`);
+      walkthrough = id;
+      walkthroughStep = 0;
+      render();
+    });
+    tabs.appendChild(b);
+  });
+
+  $("walk-desc").textContent = "";
+  $("walk-steps").innerHTML = "";
+  if (!walkthrough) {
+    $("walk-desc").textContent = "点标签选一个场景。每个场景先重置循环和文件系统，再一步步走。";
+    return;
+  }
+
+  const w = WALKTHROUGHS[walkthrough];
+  $("walk-desc").textContent = w.desc;
+  const wrap = $("walk-steps");
+  w.steps.forEach((step, i) => {
+    const done = i < walkthroughStep;
+    const row = document.createElement("div");
+    row.className = "step" + (done ? " done" : "");
+    const btn = document.createElement("button");
+    btn.innerHTML = `<span class="num">${i + 1}</span>${step.label}`;
+    btn.disabled = i !== walkthroughStep;
+    btn.addEventListener("click", () => {
+      step.run(state, vfs);
+      walkthroughStep = i + 1;
+      render();
+    });
+    row.appendChild(btn);
+    if (done) { const n = document.createElement("div"); n.className = "note"; n.textContent = "✓ 已完成"; row.appendChild(n); }
+    wrap.appendChild(row);
+  });
+
+  if (walkthroughStep >= w.steps.length) {
+    const banner = document.createElement("div");
+    banner.className = "done-banner";
+    banner.textContent = "✓ 场景完成——看“当前状态”和“对话日志”，这个设计点成立吗？";
+    wrap.appendChild(banner);
+  }
+}
+
+reset();
+</script>
+</body>
+</html>
