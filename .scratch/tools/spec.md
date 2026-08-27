@@ -8,7 +8,7 @@ The CLI is one-shot chat. The user wants it to actually do things: the model sho
 
 ## Solution
 
-A `--tools` flag turns the CLI into an agent: the model is advertised seven tools (`read_file`, `write_file`, `edit_file`, `grep`, `glob`, `bash`, `list_files`), each with a name, description, and JSON-schema parameters. The agent loop sends the conversation (with tool schemas) to the model; while the model requests tools, the CLI executes them against the current directory and feeds the results back; it stops on a final text answer or after 10 tool rounds. `read_file` controls response length via `offset`/`maxLines` and tells the model how to continue via a `[TRUNCATED]` marker.
+Tools are always available and the model decides whether to call them: the model is advertised seven tools (`read_file`, `write_file`, `edit_file`, `grep`, `glob`, `bash`, `list_files`), each with a name, description, and JSON-schema parameters. The agent loop sends the conversation (with tool schemas) to the model; while the model requests tools, the CLI executes them against the current directory and feeds the results back; it stops on a final text answer or after 10 tool rounds. When the model calls no tools, the run is exactly a one-shot conversation. `read_file` controls response length via `offset`/`maxLines` and tells the model how to continue via a `[TRUNCATED]` marker.
 
 ## Verdict (from prototype)
 
@@ -16,7 +16,7 @@ A throwaway HTML prototype (`prototype/tools` branch, `src/prototype-tools.html`
 
 ## User Stories
 
-1. As a user, I want `--tools` to give the model seven tools, so that it can inspect and modify the workspace instead of only chatting.
+1. As a user, I want tools available by default, so that the model can inspect and modify the workspace without any extra flag.
 2. As a user, I want the model's tool requests executed against the real current directory, so that results reflect actual files.
 3. As a user, I want tool results fed back to the model automatically, so that it can iterate until it has the answer.
 4. As a user, I want the loop to stop on a final text answer, so that I get a normal reply when no more tools are needed.
@@ -33,7 +33,7 @@ A throwaway HTML prototype (`prototype/tools` branch, `src/prototype-tools.html`
 - **Normalized message model**: `system`/`user`/`assistant`/`tool` with tool calls and tool results; the wire module translates to each provider's format (OpenAI `role:"tool"` + `tool_call_id`; Anthropic tool results folded into a user turn with `tool_result` blocks). Unit-tested without any SDK.
 - **Agent loop** (`src/agent/loop.ts`): tool rounds capped (default 10); a round past the cap aborts without executing; tool errors become result content; results capped at 8000 chars with a truncation marker; unknown tool names feed back an error listing available tools.
 - **Tools** (`src/tools/`): one file per tool + registry. `read_file` pagination matches the prototype exactly (offset/maxLines, `[TRUNCATED — N lines total; continue with offset=M]`). `edit_file` replaces the first exact occurrence per edit, fails the whole call on a miss. File tools resolve paths against the workspace root and reject escapes; grep/glob skip `node_modules`, `.git`, `dist`, etc. `bash` runs unsandboxed (policy deferred), output capped.
-- **CLI**: `--tools` flag; agent system prompt describes the workspace, read_file pagination, and tool-preferences. Aborted loops print the partial answer, a stderr warning, and exit 1.
+- **CLI**: no flag — tools are always advertised; the agent system prompt describes the workspace, read_file pagination, and tool-preferences. Aborted loops print the partial answer, a stderr warning, and exit 1.
 
 ## Testing Decisions
 
@@ -44,6 +44,7 @@ A throwaway HTML prototype (`prototype/tools` branch, `src/prototype-tools.html`
 ## Out of Scope
 
 - Bash sandboxing / confirmation / allowlists (deferred to a later requirement)
+- A `--no-tools` opt-out (not requested; advertising tools costs tokens, revisit if needed)
 - Streaming responses
 - Multi-turn interactive agent sessions / session persistence
 - Tool-call concurrency limits, retries, rate limiting

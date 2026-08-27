@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { CliUsageError, parseArgs } from "../src/cli.js";
+import { CliUsageError, formatResult, parseArgs } from "../src/cli.js";
 
 describe("parseArgs", () => {
   it("collects a positional prompt", () => {
@@ -39,11 +39,6 @@ describe("parseArgs", () => {
     expect(parseArgs(["--verbose"]).verbose).toBe(true);
   });
 
-  it("parses --tools and defaults it to false", () => {
-    expect(parseArgs(["--tools", "do it"]).tools).toBe(true);
-    expect(parseArgs(["do it"]).tools).toBe(false);
-  });
-
   it("leaves prompt undefined when no positional is given (so stdin is used)", () => {
     expect(parseArgs(["--verbose"]).prompt).toBeUndefined();
     expect(parseArgs([]).prompt).toBeUndefined();
@@ -59,5 +54,27 @@ describe("parseArgs", () => {
 
   it("rejects --provider without a value", () => {
     expect(() => parseArgs(["--provider"])).toThrow(CliUsageError);
+  });
+});
+
+describe("formatResult", () => {
+  const result = {
+    content: "Hello, world!",
+    toolCalls: null,
+    model: "deepseek-v4-flash",
+    usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 },
+  };
+
+  it("prints only the content by default", () => {
+    const { stdout, stderr } = formatResult(result, { verbose: false });
+    expect(stdout).toBe("Hello, world!\n");
+    expect(stderr).toBeNull();
+  });
+
+  it("adds model and usage to stderr with --verbose", () => {
+    const verbose = formatResult(result, { verbose: true });
+    expect(verbose.stdout).toBe("Hello, world!\n");
+    expect(verbose.stderr).toContain("model=deepseek-v4-flash");
+    expect(verbose.stderr).toContain("total=5");
   });
 });

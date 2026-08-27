@@ -3,13 +3,12 @@ import { stdin } from "node:process";
 import readline from "node:readline/promises";
 
 import { PROVIDERS } from "./adapters/providers.js";
-import type { ConversationResult } from "./conversation.js";
+import type { ConversationResult } from "./adapters/types.js";
 
 export interface CliArgs {
   prompt: string | undefined;
   provider: string | undefined;
   model: string | undefined;
-  tools: boolean;
   verbose: boolean;
   help: boolean;
   version: boolean;
@@ -20,7 +19,6 @@ export function parseArgs(argv: string[]): CliArgs {
     prompt: undefined,
     provider: undefined,
     model: undefined,
-    tools: false,
     verbose: false,
     help: false,
     version: false,
@@ -32,7 +30,6 @@ export function parseArgs(argv: string[]): CliArgs {
     if (arg === "--help" || arg === "-h") args.help = true;
     else if (arg === "--version") args.version = true;
     else if (arg === "--verbose") args.verbose = true;
-    else if (arg === "--tools") args.tools = true;
     else if (arg === "--provider") {
       const value = argv[++i];
       if (!value) throw new CliUsageError("--provider requires a value");
@@ -124,10 +121,12 @@ Usage:
 Options:
   --provider <id>  Provider: ${Object.keys(PROVIDERS).join(" | ")} (default: $LLM_PROVIDER or ${PROVIDERS.deepseek.id})
   --model <name>   Model (default: $<PROVIDER>_MODEL or the provider's default, e.g. ${PROVIDERS.deepseek.defaultModel})
-  --tools          Agent mode: give the model tools (read/write/edit/grep/glob/bash/list_files)
-  --verbose        Print model and token usage to stderr
+  --verbose        Print model, iterations, and tool-call count to stderr
   -h, --help       Show this help
   --version        Print the version
+
+Tools (always available — the model decides whether to call them):
+  read_file, write_file, edit_file, grep, glob, bash, list_files
 
 Environment:
   DEEPSEEK_API_KEY        required for provider "deepseek" (or put it in .env)

@@ -2,7 +2,7 @@
 
 ## Glossary
 
-- **conversation**: a single exchange — one prompt in, one model response out. This CLI is one-shot: no session state, no history, nothing carried between runs.
+- **conversation**: a single exchange — one prompt in, one model response out. Tools are always available and the model decides whether to call them; when it doesn't, a conversation is exactly one round.
 - **message**: one `role` + `content` pair sent to the model. This CLI always sends exactly one user message per conversation.
 - **prompt**: the user-supplied input text that becomes the user message.
 - **response**: the model's reply to the prompt.

@@ -109,6 +109,16 @@ describe("runAgent", () => {
     expect(result.toolCallsMade).toBe(2); // only rounds within the cap executed
   });
 
+  it("returns immediately when the model answers without calling tools", async () => {
+    const adapter = fakeAdapter([finalRaw("42")]);
+    const result = await runAgent({ adapter, model: "m", userPrompt: "what is 6*7?", tools: toolSpecs(), toolContext: ctx });
+    expect(result.text).toBe("42");
+    expect(result.iterations).toBe(1);
+    expect(result.toolCallsMade).toBe(0);
+    expect(result.aborted).toBe(false);
+    expect(adapter.chats).toHaveLength(1);
+  });
+
   it("honors the system prompt as the first message", async () => {
     const adapter = fakeAdapter([finalRaw("ok")]);
     await runAgent({
