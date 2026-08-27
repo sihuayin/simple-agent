@@ -1,0 +1,593 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型：多模型适配层（DeepSeek + Claude）</title>
+<style>
+  :root {
+    --accent: #4f46e5;
+    --accent-soft: #eef2ff;
+    --ink: #1e293b;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --ok: #059669;
+    --err: #dc2626;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--ink);
+    margin: 0;
+    background: #f8fafc;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 80px; }
+  header h1 { font-size: 22px; margin: 0 0 6px; }
+  header .badge {
+    display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent);
+    background: var(--accent-soft); border: 1px solid #c7d2fe; border-radius: 999px;
+    padding: 2px 10px; margin-bottom: 10px;
+  }
+  header .question {
+    background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--ink); margin: 10px 0 22px;
+  }
+  section { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 18px; }
+  section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; }
+  .kv { display: grid; grid-template-columns: 190px 1fr; gap: 4px 12px; font-size: 14px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-weight: 500; }
+  .kv dd.mono { font-family: var(--mono); font-size: 13px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-size: 12px; font-weight: 600; }
+  .pill.ok { background: #ecfdf5; color: var(--ok); }
+  .pill.bad { background: #fef2f2; color: var(--err); }
+  .pill.warn { background: #fffbeb; color: #b45309; }
+  .pill.acc { background: var(--accent-soft); color: var(--accent); }
+  .callout {
+    margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px;
+    background: var(--accent-soft); color: var(--accent); border: 1px solid #c7d2fe;
+  }
+  .controls { display: flex; flex-direction: column; gap: 14px; }
+  .ctl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+  .ctl-row .lbl { color: var(--muted); min-width: 150px; font-family: var(--mono); font-size: 13px; }
+  button {
+    font: inherit; font-size: 13px; cursor: pointer;
+    border: 1px solid var(--border); background: #fff; color: var(--ink);
+    border-radius: 6px; padding: 5px 12px; transition: background .12s, border-color .12s;
+  }
+  button:hover { border-color: var(--accent); }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 7px 18px; }
+  button.primary:hover { background: #4338ca; }
+  button.danger:hover { border-color: var(--err); color: var(--err); }
+  input[type=text] {
+    font: inherit; font-family: var(--mono); font-size: 13px; border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; width: 200px;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .result-box { border-radius: 8px; padding: 12px 14px; font-size: 14px; }
+  .result-box.err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  .result-box.ok { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .result-box h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+  .kv-sm { display: grid; grid-template-columns: 130px 1fr; gap: 2px 10px; font-size: 13px; }
+  .kv-sm dt { color: var(--muted); }
+  .kv-sm dd { margin: 0; font-weight: 500; }
+  details { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  details pre { background: #0f172a; color: #cbd5e1; border-radius: 6px; padding: 10px; overflow-x: auto; font-size: 11px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tab { border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .step { margin: 10px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .step .num { display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); text-align: center; font-size: 12px; font-weight: 700; line-height: 22px; margin-right: 8px; }
+  .step.done .num { background: var(--ok); color: #fff; }
+  .step.done { border-color: #bbf7d0; background: #f0fdf4; }
+  .step .note { color: var(--muted); font-size: 12px; margin-left: 30px; }
+  .walk-desc { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .done-banner { color: var(--ok); font-weight: 600; font-size: 14px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="badge">原型 PROTOTYPE · 逻辑验证</span>
+  <h1>多模型适配层：DeepSeek + Claude</h1>
+  <div class="question">
+    <strong>要回答的问题：</strong>把“大模型提供方”抽象成适配层时，这套逻辑对不对——
+    提供方怎么选（标志 &gt; 环境变量 &gt; 默认）、各自缺什么配置时报什么错、以及两种完全不同的 API 响应怎么归一化成同一个结果？
+    下面是模拟器：按钮代表 CLI 的标志和环境变量，点“发送”会用一个模拟的原始响应走一遍真实逻辑。
+    <br><br>
+    <strong>约定：</strong>“Claude”= Anthropic 官方 API（Claude Code 用的模型同源）；默认模型取自本机 Claude Code 实际使用最多的 <code>claude-sonnet-4-5</code>。
+  </div>
+</header>
+
+<section>
+  <h2>当前状态</h2>
+  <dl class="kv">
+    <dt>生效提供方</dt>
+    <dd id="st-provider" class="mono">—</dd>
+    <dt>选择来源</dt>
+    <dd id="st-source">—</dd>
+    <dt>生效模型</dt>
+    <dd id="st-model" class="mono">—</dd>
+    <dt>Key 检查</dt>
+    <dd id="st-keys">—</dd>
+  </dl>
+  <div class="callout" id="st-changed">初始状态：所有开关都未设置，等于不带任何参数运行 CLI。</div>
+</section>
+
+<section>
+  <h2>自由操作（模拟 CLI 参数与环境变量）</h2>
+  <div class="controls">
+    <div class="ctl-row">
+      <span class="lbl">--provider 标志</span>
+      <button data-flag="none">未指定</button>
+      <button data-flag="deepseek">--provider deepseek</button>
+      <button data-flag="claude">--provider claude</button>
+      <button data-flag="llama">--provider llama（不存在）</button>
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">LLM_PROVIDER 环境变量</span>
+      <button data-env-provider="none">未设置</button>
+      <button data-env-provider="deepseek">deepseek</button>
+      <button data-env-provider="claude">claude</button>
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">DEEPSEEK_API_KEY</span>
+      <button data-key="deepseek" data-val="1">已设置</button>
+      <button data-key="deepseek" data-val="0">未设置</button>
+      <span class="lbl" style="margin-left:12px">ANTHROPIC_API_KEY</span>
+      <button data-key="claude" data-val="1">已设置</button>
+      <button data-key="claude" data-val="0">未设置</button>
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">--model 标志</span>
+      <input type="text" id="model-flag" placeholder="留空 = 不指定">
+    </div>
+    <div class="ctl-row">
+      <span class="lbl">模拟响应</span>
+      <button id="edge-case">正常响应</button>
+      <span style="color:var(--muted);font-size:12px">“空回复”场景：Anthropic 返回空 content 数组</span>
+    </div>
+    <div class="ctl-row">
+      <button class="primary" id="send">发送 prompt</button>
+      <button id="reset">重置</button>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>结果</h2>
+  <div id="result">还没发送过。点“发送 prompt”试试。</div>
+</section>
+
+<section>
+  <h2>引导场景</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="walk-desc" id="walk-desc"></div>
+  <div id="walk-steps"></div>
+</section>
+
+</div>
+
+<!-- ================================================================
+     纯逻辑模块（可整体搬进真实代码库，如 src/adapters/）：
+     不引用任何 DOM，页面只负责调用它。Liftable pure module.
+     ================================================================ -->
+<script id="adapter-module">
+"use strict";
+
+// 提供方注册表：以后加新模型，往这里加一项即可
+const PROVIDERS = {
+  deepseek: {
+    name: "DeepSeek",
+    defaultModel: "deepseek-v4-flash",
+    keyEnvVar: "DEEPSEEK_API_KEY",
+    modelEnvVar: "DEEPSEEK_MODEL",
+    baseUrlEnvVar: "DEEPSEEK_BASE_URL",
+    defaultBaseUrl: "https://api.deepseek.com",
+    // 模拟的原始响应：OpenAI 兼容格式
+    sampleRaw: {
+      model: "deepseek-v4-flash",
+      choices: [{ message: { role: "assistant", content: "DeepSeek 的回答：适配层把 choices[0].message.content 取了出来。" } }],
+      usage: { prompt_tokens: 91, completion_tokens: 39, total_tokens: 130 },
+    },
+  },
+  claude: {
+    name: "Claude",
+    defaultModel: "claude-sonnet-4-5",
+    keyEnvVar: "ANTHROPIC_API_KEY",
+    modelEnvVar: "ANTHROPIC_MODEL",
+    baseUrlEnvVar: "ANTHROPIC_BASE_URL",
+    defaultBaseUrl: "https://api.anthropic.com",
+    // 模拟的原始响应：Anthropic 格式（content 是块数组）
+    sampleRaw: {
+      model: "claude-sonnet-4-5",
+      content: [{ type: "text", text: "Claude 的回答：适配层把 content 里的 text 块拼了出来。" }],
+      usage: { input_tokens: 88, output_tokens: 41 },
+    },
+    // 边界场景：无文本块
+    emptyRaw: {
+      model: "claude-sonnet-4-5",
+      content: [],
+      usage: { input_tokens: 10, output_tokens: 0 },
+    },
+  },
+};
+
+class UnknownProviderError extends Error {
+  constructor(provider) {
+    super(`未知提供方 "${provider}"。可用提供方：${Object.keys(PROVIDERS).join("、")}。`);
+    this.name = "UnknownProviderError";
+  }
+}
+
+// 提供方选择：--provider 标志 > LLM_PROVIDER 环境变量 > 默认 deepseek
+function resolveProvider(flag, env) {
+  const provider = flag ?? env.LLM_PROVIDER ?? "deepseek";
+  if (!(provider in PROVIDERS)) throw new UnknownProviderError(provider);
+  return provider;
+}
+
+// 选择来源说明（给页面展示用，纯函数）
+function providerSource(flag, env) {
+  if (flag) return `--provider ${flag} 标志`;
+  if (env.LLM_PROVIDER) return "LLM_PROVIDER 环境变量";
+  return "默认（未指定任何选择）";
+}
+
+// 模型解析：--model 标志 > 该提供方的模型环境变量 > 该提供方的默认模型
+function resolveModel(provider, modelFlag, env) {
+  const info = PROVIDERS[provider];
+  const envModel = (env[info.modelEnvVar] ?? "").trim();
+  return modelFlag || envModel || info.defaultModel;
+}
+
+// Key 检查：每个提供方各自需要自己的 key
+function checkKeys(provider, env) {
+  const info = PROVIDERS[provider];
+  if (env[info.keyEnvVar]) return { ok: true, missing: [] };
+  return { ok: false, missing: [info.keyEnvVar] };
+}
+
+// 归一化：DeepSeek（OpenAI 兼容：choices[].message.content, *_tokens）
+function normalizeDeepseek(raw) {
+  return {
+    content: raw.choices?.[0]?.message?.content ?? null,
+    model: raw.model,
+    usage: raw.usage
+      ? {
+          promptTokens: raw.usage.prompt_tokens,
+          completionTokens: raw.usage.completion_tokens,
+          totalTokens: raw.usage.total_tokens,
+        }
+      : undefined,
+  };
+}
+
+// 归一化：Claude（Anthropic：content 块数组 + text 块拼接, input/output_tokens）
+function normalizeClaude(raw) {
+  const text = (raw.content ?? [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n");
+  return {
+    content: text || null,
+    model: raw.model,
+    usage: raw.usage
+      ? {
+          promptTokens: raw.usage.input_tokens,
+          completionTokens: raw.usage.output_tokens,
+          totalTokens: raw.usage.input_tokens + raw.usage.output_tokens,
+        }
+      : undefined,
+  };
+}
+
+function normalizeResponse(provider, raw) {
+  if (provider === "deepseek") return normalizeDeepseek(raw);
+  if (provider === "claude") return normalizeClaude(raw);
+  throw new UnknownProviderError(provider);
+}
+
+// 取模拟原始响应
+function sampleRawFor(provider, edgeCase) {
+  const info = PROVIDERS[provider];
+  if (provider === "claude" && edgeCase) return info.emptyRaw;
+  return info.sampleRaw;
+}
+</script>
+
+<!-- 页面装配：只负责状态与渲染，调用上面的纯模块 -->
+<script>
+"use strict";
+
+const state = {
+  providerFlag: null,           // null | "deepseek" | "claude" | "llama"
+  env: { LLM_PROVIDER: null, DEEPSEEK_API_KEY: false, ANTHROPIC_API_KEY: false, DEEPSEEK_MODEL: "", ANTHROPIC_MODEL: "" },
+  modelFlag: "",
+  edgeCase: false,
+  result: null,                 // { kind:"ok"|"error", ... }
+  lastChange: "初始状态：所有开关都未设置，等于不带任何参数运行 CLI。",
+  walkthrough: null,
+  walkthroughStep: 0,
+};
+
+function resetState(changeMsg) {
+  state.providerFlag = null;
+  state.env = { LLM_PROVIDER: null, DEEPSEEK_API_KEY: false, ANTHROPIC_API_KEY: false, DEEPSEEK_MODEL: "", ANTHROPIC_MODEL: "" };
+  state.modelFlag = "";
+  state.edgeCase = false;
+  state.result = null;
+  state.lastChange = changeMsg || "已重置。";
+  document.getElementById("model-flag").value = "";
+}
+
+function performSend() {
+  const env = { ...state.env, LLM_PROVIDER: state.env.LLM_PROVIDER };
+  try {
+    const provider = resolveProvider(state.providerFlag, env);
+    const info = PROVIDERS[provider];
+    const keys = checkKeys(provider, env);
+    if (!keys.ok) {
+      state.result = { kind: "error", title: "缺少配置", message: `提供方 ${info.name} 需要环境变量 ${keys.missing.join("、")}，当前未设置。注意：DeepSeek 的 key 不能替代 Claude 的 key，反之亦然。` };
+      state.lastChange = `发送失败：缺少 ${keys.missing.join("、")}`;
+      render();
+      return;
+    }
+    const model = resolveModel(provider, state.modelFlag, env);
+    const raw = sampleRawFor(provider, state.edgeCase);
+    const normalized = normalizeResponse(provider, raw);
+    state.result = { kind: "ok", provider, model, raw, normalized };
+    state.lastChange = `发送成功：${info.name} 返回了响应，已归一化。`;
+  } catch (e) {
+    state.result = { kind: "error", title: "发送失败", message: e.message };
+    state.lastChange = `发送失败：${e.message}`;
+  }
+  render();
+}
+
+// ---- 渲染 ----
+function $id(id) { return document.getElementById(id); }
+
+function render() {
+  const env = { ...state.env };
+  // 状态面板
+  let provider = null, source = "—", model = "—", keysHtml = "—";
+  try {
+    provider = resolveProvider(state.providerFlag, env);
+    source = providerSource(state.providerFlag, env);
+    const info = PROVIDERS[provider];
+    model = resolveModel(provider, state.modelFlag, env);
+    const keys = checkKeys(provider, env);
+    keysHtml = keys.ok
+      ? `<span class="pill ok">${info.keyEnvVar} 已设置</span>`
+      : `<span class="pill bad">缺少 ${keys.missing.join("、")}</span>`;
+  } catch (e) {
+    source = "—";
+    keysHtml = `<span class="pill bad">${e.message}</span>`;
+  }
+  $id("st-provider").textContent = provider ? `${provider}（${PROVIDERS[provider].name}）` : "—";
+  $id("st-source").textContent = source;
+  $id("st-model").textContent = model;
+  $id("st-keys").innerHTML = keysHtml;
+  $id("st-changed").textContent = "刚刚发生：" + state.lastChange;
+
+  // 按钮状态
+  document.querySelectorAll("[data-flag]").forEach((b) => {
+    const v = b.dataset.flag;
+    b.classList.toggle("on", v === "none" ? state.providerFlag === null : state.providerFlag === v);
+  });
+  document.querySelectorAll("[data-env-provider]").forEach((b) => {
+    const v = b.dataset.envProvider;
+    b.classList.toggle("on", v === "none" ? state.env.LLM_PROVIDER === null : state.env.LLM_PROVIDER === v);
+  });
+  document.querySelectorAll("[data-key]").forEach((b) => {
+    const k = b.dataset.key === "deepseek" ? "DEEPSEEK_API_KEY" : "ANTHROPIC_API_KEY";
+    b.classList.toggle("on", state.env[k] === (b.dataset.val === "1"));
+  });
+  $id("edge-case").classList.toggle("on", state.edgeCase);
+  $id("edge-case").textContent = state.edgeCase ? "空回复（边界）" : "正常响应";
+
+  // 结果面板
+  const box = $id("result");
+  if (!state.result) {
+    box.className = "result-box";
+    box.textContent = "还没发送过。点“发送 prompt”试试。";
+  } else if (state.result.kind === "error") {
+    box.className = "result-box err";
+    box.innerHTML = `<h3>${state.result.title}</h3><div>${state.result.message}</div>`;
+  } else {
+    const n = state.result.normalized;
+    const usage = n.usage
+      ? `<div class="kv-sm">
+           <dt>prompt tokens</dt><dd>${n.usage.promptTokens}</dd>
+           <dt>completion tokens</dt><dd>${n.usage.completionTokens}</dd>
+           <dt>total tokens</dt><dd>${n.usage.totalTokens}</dd>
+         </div>`
+      : `<div class="kv-sm"><dt>usage</dt><dd>无</dd></div>`;
+    box.className = "result-box ok";
+    box.innerHTML = `
+      <h3>归一化结果（两种不同格式的响应，落成同一种结构）</h3>
+      <div class="kv-sm">
+        <dt>content</dt><dd>${n.content ?? "（空）"}</dd>
+        <dt>model</dt><dd class="mono">${n.model}</dd>
+        <dt>usage</dt><dd>${usage}</dd>
+      </div>
+      <details><summary>查看原始响应（${state.result.provider} 的格式）</summary>
+        <pre>${JSON.stringify(state.result.raw, null, 2)}</pre>
+      </details>`;
+  }
+
+  renderWalkthrough();
+}
+
+// ---- 自由操作 ----
+document.querySelectorAll("[data-flag]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const v = b.dataset.flag;
+    state.providerFlag = v === "none" ? null : v;
+    state.walkthrough = null;
+    state.lastChange = `--provider 标志设为 ${v === "none" ? "未指定" : v}`;
+    render();
+  });
+});
+document.querySelectorAll("[data-env-provider]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const v = b.dataset.envProvider;
+    state.env.LLM_PROVIDER = v === "none" ? null : v;
+    state.walkthrough = null;
+    state.lastChange = `LLM_PROVIDER 环境变量设为 ${v === "none" ? "未设置" : v}`;
+    render();
+  });
+});
+document.querySelectorAll("[data-key]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const k = b.dataset.key === "deepseek" ? "DEEPSEEK_API_KEY" : "ANTHROPIC_API_KEY";
+    state.env[k] = b.dataset.val === "1";
+    state.walkthrough = null;
+    state.lastChange = `${k} ${state.env[k] ? "已设置" : "未设置"}`;
+    render();
+  });
+});
+$id("model-flag").addEventListener("input", (e) => {
+  state.modelFlag = e.target.value;
+  state.walkthrough = null;
+  state.lastChange = state.modelFlag ? `--model 标志设为 ${state.modelFlag}` : "--model 标志已清空";
+  render();
+});
+$id("edge-case").addEventListener("click", () => {
+  state.edgeCase = !state.edgeCase;
+  state.walkthrough = null;
+  state.lastChange = state.edgeCase ? "模拟响应切到“空回复”" : "模拟响应切回“正常”";
+  render();
+});
+$id("send").addEventListener("click", () => { state.walkthrough = null; performSend(); });
+$id("reset").addEventListener("click", () => { resetState(); render(); });
+
+// ---- 引导场景 ----
+const WALKTHROUGHS = {
+  "default": {
+    title: "1 · 默认走 DeepSeek",
+    desc: "什么都不指定就发送：没有 --provider 标志、没有 LLM_PROVIDER。预期：自动落到 deepseek，模型用 deepseek-v4-flash，OpenAI 兼容的响应被归一化。",
+    steps: [
+      { label: "设置 DEEPSEEK_API_KEY", run: (s) => { s.env.DEEPSEEK_API_KEY = true; } },
+      { label: "发送 prompt", run: () => { performSend(); }, wait: true },
+    ],
+  },
+  "claude": {
+    title: "2 · 切到 Claude",
+    desc: "用 --provider claude 切换提供方，设置 ANTHROPIC_API_KEY 后发送。注意：Anthropic 的响应（content 块数组 + input/output_tokens）被归一化成了和 DeepSeek 一样的结果结构。",
+    steps: [
+      { label: "设置 ANTHROPIC_API_KEY", run: (s) => { s.env.ANTHROPIC_API_KEY = true; } },
+      { label: "用 --provider claude 切换", run: (s) => { s.providerFlag = "claude"; } },
+      { label: "发送 prompt", run: () => { performSend(); }, wait: true },
+    ],
+  },
+  "missingKey": {
+    title: "3 · 缺 key 的报错",
+    desc: "切到 Claude，但只设置了 DeepSeek 的 key。预期：报错并明确指出缺的是 ANTHROPIC_API_KEY——DeepSeek 的 key 不能替代 Claude 的 key。",
+    steps: [
+      { label: "设置 DEEPSEEK_API_KEY（只设这个）", run: (s) => { s.env.DEEPSEEK_API_KEY = true; } },
+      { label: "用 --provider claude 切换", run: (s) => { s.providerFlag = "claude"; } },
+      { label: "发送 prompt（应该报错）", run: () => { performSend(); }, wait: true },
+    ],
+  },
+  "unknownProvider": {
+    title: "4 · 不存在的提供方",
+    desc: "--provider llama，而注册表里只有 deepseek 和 claude。预期：报错并把可用提供方列出来。",
+    steps: [
+      { label: "设置 DEEPSEEK_API_KEY", run: (s) => { s.env.DEEPSEEK_API_KEY = true; } },
+      { label: "用 --provider llama 切换", run: (s) => { s.providerFlag = "llama"; } },
+      { label: "发送 prompt（应该报错）", run: () => { performSend(); }, wait: true },
+    ],
+  },
+  "crossModel": {
+    title: "5 · 模型串台",
+    desc: "提供方是 Claude，但 --model 硬塞了一个 deepseek-v4-flash。当前设计是模型 ID 原样透传、不做校验（这是要你拍板的决策点：要不要拒绝这种组合？）。",
+    steps: [
+      { label: "设置 ANTHROPIC_API_KEY", run: (s) => { s.env.ANTHROPIC_API_KEY = true; } },
+      { label: "用 --provider claude 切换", run: (s) => { s.providerFlag = "claude"; } },
+      { label: "在 --model 里填 deepseek-v4-flash", run: (s) => {
+          s.modelFlag = "deepseek-v4-flash";
+          document.getElementById("model-flag").value = "deepseek-v4-flash";
+        } },
+      { label: "发送 prompt（观察模型被透传）", run: () => { performSend(); }, wait: true },
+    ],
+  },
+  "emptyReply": {
+    title: "6 · 空回复不崩",
+    desc: "Anthropic 可能返回空的 content 数组（没有文本块）。预期：归一化结果 content 为“空”，而不是崩溃或报错。",
+    steps: [
+      { label: "设置 ANTHROPIC_API_KEY", run: (s) => { s.env.ANTHROPIC_API_KEY = true; } },
+      { label: "用 --provider claude 切换", run: (s) => { s.providerFlag = "claude"; } },
+      { label: "把模拟响应切成“空回复”", run: (s) => { s.edgeCase = true; } },
+      { label: "发送 prompt（content 应为空）", run: () => { performSend(); }, wait: true },
+    ],
+  },
+};
+
+function renderWalkthrough() {
+  const tabs = $id("tabs");
+  tabs.innerHTML = "";
+  Object.entries(WALKTHROUGHS).forEach(([id, w]) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (state.walkthrough === id ? " active" : "");
+    b.textContent = w.title;
+    b.addEventListener("click", () => {
+      resetState(`开始引导场景：${w.title}`);
+      state.walkthrough = id;
+      state.walkthroughStep = 0;
+      render();
+    });
+    tabs.appendChild(b);
+  });
+
+  $id("walk-desc").textContent = "";
+  $id("walk-steps").innerHTML = "";
+  if (!state.walkthrough) {
+    $id("walk-desc").textContent = "点上面的标签选择一个场景。每个场景都会先重置状态，再带你一步步走。";
+    return;
+  }
+
+  const w = WALKTHROUGHS[state.walkthrough];
+  $id("walk-desc").textContent = w.desc;
+
+  const wrap = $id("walk-steps");
+  w.steps.forEach((step, i) => {
+    const done = i < state.walkthroughStep;
+    const row = document.createElement("div");
+    row.className = "step" + (done ? " done" : "");
+    const btn = document.createElement("button");
+    btn.innerHTML = `<span class="num">${i + 1}</span>${step.label}`;
+    btn.disabled = i !== state.walkthroughStep;
+    btn.addEventListener("click", () => {
+      step.run(state);
+      state.walkthroughStep = i + 1;
+      render();
+    });
+    row.appendChild(btn);
+    if (i < state.walkthroughStep) {
+      const note = document.createElement("div");
+      note.className = "note";
+      note.textContent = "✓ 已完成";
+      row.appendChild(note);
+    }
+    wrap.appendChild(row);
+  });
+
+  if (state.walkthroughStep >= w.steps.length) {
+    const banner = document.createElement("div");
+    banner.className = "done-banner";
+    banner.textContent = "✓ 场景完成——观察上面的“当前状态”和“结果”，这个场景验证的设计点成立吗？";
+    wrap.appendChild(banner);
+  }
+}
+
+resetState();
+render();
+</script>
+</body>
+</html>
