@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { DeepseekRaw, NormalizedMessage, ProviderAdapter } from "../../src/adapters/types.js";
 import { runAgent } from "../../src/agent/loop.js";
@@ -14,6 +14,11 @@ let ctx: ToolContext;
 beforeAll(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "sa-agent-"));
   await fs.writeFile(path.join(root, "greet.txt"), "hello from greet.txt");
+  // 大文件：工具结果会被截断到 8000 字符（约 2000 token），用于预算测试
+  await fs.writeFile(
+    path.join(root, "big.txt"),
+    Array.from({ length: 400 }, (_, i) => `line ${String(i).padStart(4, "0")} ${i}-padding-padding-padding-padding-padding-padding`).join("\n"),
+  );
   ctx = { workspace: root, cwd: root, env: process.env };
 });
 
@@ -42,7 +47,7 @@ function finalRaw(text: string): DeepseekRaw {
 function fakeAdapter(script: DeepseekRaw[]): ProviderAdapter & { chats: NormalizedMessage[][] } {
   const calls: NormalizedMessage[][] = [];
   return {
-    info: { id: "deepseek", name: "DeepSeek", defaultModel: "deepseek-v4-flash", keyEnvVar: "DEEPSEEK_API_KEY", modelEnvVar: "DEEPSEEK_MODEL", baseUrlEnvVar: "DEEPSEEK_BASE_URL", defaultBaseUrl: "https://api.deepseek.com" },
+    info: { id: "deepseek", name: "DeepSeek", defaultModel: "deepseek-v4-flash", keyEnvVar: "DEEPSEEK_API_KEY", modelEnvVar: "DEEPSEEK_MODEL", baseUrlEnvVar: "DEEPSEEK_BASE_URL", defaultBaseUrl: "https://api.deepseek.com", contextWindow: 20000 },
     async chat(input) {
       calls.push(input.messages);
       const next = script.shift();
@@ -141,5 +146,75 @@ describe("runAgent", () => {
     const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
     expect(toolMsg.content).toContain("[TOOL_RESULT_TRUNCATED");
     expect(toolMsg.content.length).toBeLessThan(9000);
+  });
+
+  it("auto-compacts when the estimate crosses the budget threshold", async () => {
+    const adapter = fakeAdapter([
+      toolUseRaw("read_file", "c1", { path: "big.txt" }),
+      toolUseRaw("read_file", "c2", { path: "big.txt" }),
+      finalRaw("done"),
+    ]);
+    const summarizer = vi.fn(async () => "SUM-1");
+    const result = await runAgent({
+      adapter,
+      model: "m",
+      userPrompt: "go",
+      tools: toolSpecs(),
+      toolContext: ctx,
+      budgetConfig: { contextWindow: 4000, keepRounds: 1 },
+      summarizer,
+    });
+    const lastChat = adapter.chats[2]!;
+    expect(summarizer).toHaveBeenCalledTimes(1);
+    expect(lastChat.some((m) => m.role === "user" && m.content.startsWith("[对话摘要] SUM-1"))).toBe(true);
+    // 第 1 轮的工具结果已不在发送内容里（只剩第 2 轮的）
+    expect(lastChat.filter((m) => m.role === "tool")).toHaveLength(1);
+    expect(result.compactions).toBe(1);
+  });
+
+  it("compacts on drift when the last actual usage crossed the threshold", async () => {
+    const bigUsage: DeepseekRaw = {
+      model: "m",
+      choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "list_files", arguments: "{}" } }] } }],
+      usage: { prompt_tokens: 4000, completion_tokens: 1, total_tokens: 4001 },
+    };
+    const adapter = fakeAdapter([
+      bigUsage,
+      toolUseRaw("list_files", "c2", {}),
+      finalRaw("done"),
+    ]);
+    const result = await runAgent({
+      adapter,
+      model: "m",
+      userPrompt: "go",
+      tools: toolSpecs(),
+      toolContext: ctx,
+      budgetConfig: { contextWindow: 4000, keepRounds: 1 },
+      summarizer: async () => "DRIFT-SUM",
+    });
+    const lastChat = adapter.chats[2]!;
+    expect(lastChat.some((m) => m.role === "user" && m.content.startsWith("[对话摘要] DRIFT-SUM"))).toBe(true);
+    expect(result.compactions).toBe(1);
+  });
+
+  it("force-compacts on /compact even below the threshold", async () => {
+    const adapter = fakeAdapter([
+      toolUseRaw("list_files", "c1", {}),
+      toolUseRaw("list_files", "c2", {}),
+      finalRaw("done"),
+    ]);
+    const result = await runAgent({
+      adapter,
+      model: "m",
+      userPrompt: "go",
+      tools: toolSpecs(),
+      toolContext: ctx,
+      budgetConfig: { contextWindow: 4000, keepRounds: 1 },
+      forceCompact: true,
+      summarizer: async () => "FORCED-SUM",
+    });
+    const lastChat = adapter.chats[2]!;
+    expect(lastChat.some((m) => m.role === "user" && m.content.startsWith("[对话摘要] FORCED-SUM"))).toBe(true);
+    expect(result.compactions).toBe(1);
   });
 });

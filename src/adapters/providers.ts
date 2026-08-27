@@ -13,6 +13,7 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
     modelEnvVar: "DEEPSEEK_MODEL",
     baseUrlEnvVar: "DEEPSEEK_BASE_URL",
     defaultBaseUrl: "https://api.deepseek.com",
+    contextWindow: 384000,
   },
   claude: {
     id: "claude",
@@ -23,5 +24,6 @@ export const PROVIDERS: Record<ProviderId, ProviderInfo> = {
     baseUrlEnvVar: "ANTHROPIC_BASE_URL",
     defaultBaseUrl: "https://api.anthropic.com",
     maxTokens: 4096,
+    contextWindow: 200000,
   },
 };

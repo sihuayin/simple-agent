@@ -12,6 +12,8 @@ export interface ProviderInfo {
   readonly defaultBaseUrl: string;
   /** Some APIs (e.g. Anthropic) require an explicit max-tokens cap. */
   readonly maxTokens?: number;
+  /** Model context window in tokens (used for the token budget). */
+  readonly contextWindow?: number;
 }
 
 /**

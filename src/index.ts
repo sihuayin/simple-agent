@@ -5,6 +5,7 @@ import { createAdapter, MissingApiKeyError } from "./adapters/client.js";
 import { resolveModel, resolveProvider, UnknownProviderError } from "./adapters/resolve.js";
 import { runAgent } from "./agent/loop.js";
 import { buildSystemPrompt } from "./agent/system_prompt.js";
+import { extractCompactCommand } from "./agent/budget.js";
 import {
   CliUsageError,
   helpText,
@@ -31,7 +32,8 @@ async function main(): Promise<void> {
   const model = resolveModel(provider, args.model);
 
   const prompt = await readPrompt(args.prompt);
-  if (!prompt.trim()) {
+  const { compact: forceCompact, rest: cleanPrompt } = extractCompactCommand(prompt);
+  if (!cleanPrompt.trim()) {
     process.stderr.write("No prompt given.\n\n");
     process.stderr.write(helpText());
     process.exitCode = 2;
@@ -44,7 +46,8 @@ async function main(): Promise<void> {
     adapter,
     model,
     systemPrompt: await buildSystemPrompt(process.cwd()),
-    userPrompt: prompt,
+    userPrompt: cleanPrompt,
+    forceCompact,
     tools: toolSpecs(),
     toolContext: { workspace: process.cwd(), cwd: process.cwd(), env: process.env },
   });
@@ -54,7 +57,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
   } else if (args.verbose) {
     process.stderr.write(
-      `[provider=${provider} model=${result.model} iterations=${result.iterations} toolCalls=${result.toolCallsMade}]\n`,
+      `[provider=${provider} model=${result.model} iterations=${result.iterations} toolCalls=${result.toolCallsMade} compacted=${result.compactions}]\n`,
     );
   }
 }

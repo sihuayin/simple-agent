@@ -55,6 +55,10 @@ Tools are always available and the model decides whether to call them; when it d
 - `--verbose` prints provider, model, iteration count, and tool-call count to stderr.
 - The system prompt is layered (role → rules → project `AGENTS.md`), stable-first so providers' prefix caches hit — see `docs/adr/0001-layered-system-prompt.md`.
 
+## Token budget
+
+Before each model call the CLI estimates context usage (CJK ≈ 1.5 chars/token, other ≈ 4 chars/token, plus per-message overhead) and auto-compacts when it crosses 80% of the provider's context window (deepseek 384K / claude 200K): older tool rounds are folded into a rolling `[对话摘要]` (one extra summary call) or truncated. Real API usage is checked too — if it crossed the threshold, the loop compacts even when the estimate looks small. A user message starting with `/compact` forces a compaction (the marker is stripped and never sent to the model). `--verbose` shows `compacted=N`.
+
 Exit codes: `0` success, `1` runtime/API error or aborted agent loop, `2` usage error.
 
 ## Development
