@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PROVIDERS } from "../src/adapters/providers.js";
-import type { ClaudeRaw, DeepseekRaw, ProviderAdapter } from "../src/adapters/types.js";
+import type { DeepseekRaw, ProviderAdapter } from "../src/adapters/types.js";
 import { formatResult } from "../src/cli.js";
 import { runConversation } from "../src/conversation.js";
 
 function fakeAdapter(overrides: Partial<ProviderAdapter> = {}): ProviderAdapter {
   return {
     info: PROVIDERS.deepseek,
-    send: vi.fn(async (): Promise<DeepseekRaw> => ({
+    chat: vi.fn(async (): Promise<DeepseekRaw> => ({
       model: "deepseek-v4-flash",
       choices: [{ message: { content: "Hello, world!" } }],
       usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
@@ -18,28 +18,32 @@ function fakeAdapter(overrides: Partial<ProviderAdapter> = {}): ProviderAdapter 
 }
 
 describe("runConversation", () => {
-  it("sends prompt and model through the adapter, then normalizes the response", async () => {
-    const send = vi.fn(async (): Promise<DeepseekRaw> => ({
+  it("sends the prompt as a single user message and normalizes the response", async () => {
+    const chat = vi.fn(async (): Promise<DeepseekRaw> => ({
       model: "deepseek-v4-flash",
       choices: [{ message: { content: "Hello, world!" } }],
       usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
     }));
-    const adapter = fakeAdapter({ send });
+    const adapter = fakeAdapter({ chat });
 
     const result = await runConversation({ adapter, model: "deepseek-v4-flash", prompt: "hi" });
 
-    expect(send).toHaveBeenCalledWith({ model: "deepseek-v4-flash", prompt: "hi" });
+    expect(chat).toHaveBeenCalledWith({
+      model: "deepseek-v4-flash",
+      messages: [{ role: "user", content: "hi" }],
+    });
     expect(result.content).toBe("Hello, world!");
+    expect(result.toolCalls).toBeNull();
     expect(result.usage).toEqual({ promptTokens: 3, completionTokens: 2, totalTokens: 5 });
   });
 
   it("normalizes an Anthropic-shaped raw response when the adapter is claude", async () => {
-    const send = vi.fn(async (): Promise<ClaudeRaw> => ({
+    const chat = vi.fn(async () => ({
       model: "claude-sonnet-4-5",
       content: [{ type: "text", text: "Hello from Claude" }],
       usage: { input_tokens: 4, output_tokens: 3 },
     }));
-    const adapter = fakeAdapter({ info: PROVIDERS.claude, send });
+    const adapter = fakeAdapter({ info: PROVIDERS.claude, chat });
 
     const result = await runConversation({ adapter, model: "claude-sonnet-4-5", prompt: "hi" });
 
@@ -51,6 +55,7 @@ describe("runConversation", () => {
 describe("formatResult", () => {
   const result = {
     content: "Hello, world!",
+    toolCalls: null,
     model: "deepseek-v4-flash",
     usage: { promptTokens: 3, completionTokens: 2, totalTokens: 5 },
   };

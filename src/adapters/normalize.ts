@@ -4,12 +4,30 @@ import type {
   DeepseekRaw,
   ProviderId,
   ProviderRawResponse,
+  ToolCall,
 } from "./types.js";
 
-/** Normalize an OpenAI-compatible (DeepSeek) raw response. */
+function safeParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/** Normalize an OpenAI-compatible (DeepSeek) raw response, incl. tool calls. */
 export function normalizeDeepseek(raw: DeepseekRaw): ConversationResult {
+  const message = raw.choices?.[0]?.message;
+  const toolCalls: ToolCall[] | null = message?.tool_calls?.length
+    ? message.tool_calls.map((tc) => ({
+        id: tc.id,
+        name: tc.function.name,
+        input: safeParseJson(tc.function.arguments),
+      }))
+    : null;
   return {
-    content: raw.choices?.[0]?.message.content ?? null,
+    content: message?.content ?? null,
+    toolCalls,
     model: raw.model,
     usage: raw.usage
       ? {
@@ -21,14 +39,21 @@ export function normalizeDeepseek(raw: DeepseekRaw): ConversationResult {
   };
 }
 
-/** Normalize an Anthropic (Claude) raw response: text blocks joined, usage renamed. */
+/** Normalize an Anthropic (Claude) raw response: text blocks joined, tool_use extracted. */
 export function normalizeClaude(raw: ClaudeRaw): ConversationResult {
-  const text = (raw.content ?? [])
-    .filter((block) => block.type === "text")
-    .map((block) => block.text ?? "")
+  const blocks = raw.content ?? [];
+  const text = blocks
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
     .join("\n");
+  const toolCalls: ToolCall[] | null = blocks.some((b) => b.type === "tool_use")
+    ? blocks
+        .filter((b) => b.type === "tool_use")
+        .map((b) => ({ id: b.id ?? "", name: b.name ?? "", input: b.input ?? {} }))
+    : null;
   return {
     content: text || null,
+    toolCalls,
     model: raw.model,
     usage: raw.usage
       ? {

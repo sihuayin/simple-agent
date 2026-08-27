@@ -19,6 +19,9 @@ export async function runConversation({
   model,
   prompt,
 }: RunConversationInput): Promise<ConversationResult> {
-  const raw = await adapter.send({ model, prompt });
+  const raw = await adapter.chat({
+    model,
+    messages: [{ role: "user", content: prompt }],
+  });
   return normalizeResponse(adapter.info.id, raw);
 }

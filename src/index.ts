@@ -3,6 +3,8 @@ import "dotenv/config";
 
 import { createAdapter, MissingApiKeyError } from "./adapters/client.js";
 import { resolveModel, resolveProvider, UnknownProviderError } from "./adapters/resolve.js";
+import { runAgent } from "./agent/loop.js";
+import { buildSystemPrompt } from "./agent/system_prompt.js";
 import {
   CliUsageError,
   formatResult,
@@ -12,6 +14,7 @@ import {
   versionText,
 } from "./cli.js";
 import { runConversation } from "./conversation.js";
+import { toolSpecs } from "./tools/registry.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -34,6 +37,29 @@ async function main(): Promise<void> {
     process.stderr.write("No prompt given.\n\n");
     process.stderr.write(helpText());
     process.exitCode = 2;
+    return;
+  }
+
+  if (args.tools) {
+    const result = await runAgent({
+      adapter,
+      model,
+      systemPrompt: buildSystemPrompt(),
+      userPrompt: prompt,
+      tools: toolSpecs(),
+      toolContext: { workspace: process.cwd(), cwd: process.cwd(), env: process.env },
+    });
+    process.stdout.write(`${result.text}\n`);
+    if (result.aborted) {
+      process.stderr.write(
+        "Aborted: the model kept requesting tools past the iteration cap.\n",
+      );
+      process.exitCode = 1;
+    } else if (args.verbose) {
+      process.stderr.write(
+        `[provider=${provider} model=${result.model} iterations=${result.iterations} toolCalls=${result.toolCallsMade}]\n`,
+      );
+    }
     return;
   }
 
