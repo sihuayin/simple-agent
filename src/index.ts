@@ -14,6 +14,7 @@ import {
   versionText,
 } from "./cli.js";
 import { toolSpecs } from "./tools/registry.js";
+import { Spinner } from "./spinner.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -42,6 +43,10 @@ async function main(): Promise<void> {
 
   // Tools are always available; the model decides whether to call them.
   // When it doesn't, this is exactly a one-shot conversation.
+  // Streaming by default: live text + a spinner while waiting.
+  // --no-stream restores one-shot behavior (final answer printed once).
+  const spinner = new Spinner("工作中…");
+  spinner.start();
   const result = await runAgent({
     adapter,
     model,
@@ -50,8 +55,18 @@ async function main(): Promise<void> {
     forceCompact,
     tools: toolSpecs(),
     toolContext: { workspace: process.cwd(), cwd: process.cwd(), env: process.env },
+    onText: args.noStream ? undefined : (t) => process.stdout.write(t),
+    onPhase: (phase) => {
+      if (phase === "waiting") spinner.start();
+      else if (phase === "streaming" || phase === "done") spinner.stop();
+    },
   });
-  process.stdout.write(`${result.text}\n`);
+  spinner.stop();
+  if (args.noStream) {
+    process.stdout.write(`${result.text}\n`);
+  } else {
+    process.stdout.write("\n"); // 流式文本末尾补换行
+  }
   if (result.aborted) {
     process.stderr.write("Aborted: the model kept requesting tools past the iteration cap.\n");
     process.exitCode = 1;

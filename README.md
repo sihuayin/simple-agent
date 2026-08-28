@@ -53,6 +53,7 @@ Tools are always available and the model decides whether to call them; when it d
 - Tool errors are fed back to the model as results (it can recover), not crashes.
 - File tools are confined to the workspace; paths escaping it are rejected. `bash` is **not** sandboxed (a safety policy is a later requirement).
 - `--verbose` prints provider, model, iteration count, and tool-call count to stderr.
+- **Streaming is on by default**: the answer appears token by token as the model generates it, with a spinner while waiting (initial connect, tool rounds, compaction). The spinner is ANSI, TTY-only, and writes to stderr so piped output stays clean. `--no-stream` restores one-shot behavior (final answer printed once). Both providers stream over their native formats — DeepSeek over OpenAI-compatible SSE, Claude over Anthropic SSE — unified behind one adapter primitive (`chatStream`), so streaming and non-streaming responses share a single code path.
 - The system prompt is layered (role → rules → project `AGENTS.md`), stable-first so providers' prefix caches hit — see `docs/adr/0001-layered-system-prompt.md`.
 
 ## Security policy

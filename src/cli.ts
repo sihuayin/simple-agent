@@ -9,6 +9,7 @@ export interface CliArgs {
   provider: string | undefined;
   model: string | undefined;
   verbose: boolean;
+  noStream: boolean;
   help: boolean;
   version: boolean;
 }
@@ -19,6 +20,7 @@ export function parseArgs(argv: string[]): CliArgs {
     provider: undefined,
     model: undefined,
     verbose: false,
+    noStream: false,
     help: false,
     version: false,
   };
@@ -29,6 +31,7 @@ export function parseArgs(argv: string[]): CliArgs {
     if (arg === "--help" || arg === "-h") args.help = true;
     else if (arg === "--version") args.version = true;
     else if (arg === "--verbose") args.verbose = true;
+    else if (arg === "--no-stream") args.noStream = true;
     else if (arg === "--provider") {
       const value = argv[++i];
       if (!value) throw new CliUsageError("--provider requires a value");
@@ -97,6 +100,7 @@ Options:
   --provider <id>  Provider: ${Object.keys(PROVIDERS).join(" | ")} (default: $LLM_PROVIDER or ${PROVIDERS.deepseek.id})
   --model <name>   Model (default: $<PROVIDER>_MODEL or the provider's default, e.g. ${PROVIDERS.deepseek.defaultModel})
   --verbose        Print model, iterations, and tool-call count to stderr
+  --no-stream      Print the final answer once (disable live streaming output)
   -h, --help       Show this help
   --version        Print the version
 

@@ -7,7 +7,7 @@ import type {
   ToolCall,
 } from "./types.js";
 
-function safeParseJson(text: string): unknown {
+export function safeParseJson(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {

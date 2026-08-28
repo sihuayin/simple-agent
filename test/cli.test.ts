@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { CliUsageError, parseArgs } from "../src/cli.js";
+import { CliUsageError, helpText, parseArgs } from "../src/cli.js";
 
 describe("parseArgs", () => {
   it("collects a positional prompt", () => {
@@ -37,6 +37,16 @@ describe("parseArgs", () => {
 
   it("parses --verbose", () => {
     expect(parseArgs(["--verbose"]).verbose).toBe(true);
+  });
+
+  it("parses --no-stream", () => {
+    expect(parseArgs(["--no-stream"]).noStream).toBe(true);
+    expect(parseArgs(["--no-stream", "hi"]).noStream).toBe(true);
+    expect(parseArgs([]).noStream).toBe(false);
+  });
+
+  it("help mentions --no-stream", () => {
+    expect(helpText()).toContain("--no-stream");
   });
 
   it("leaves prompt undefined when no positional is given (so stdin is used)", () => {

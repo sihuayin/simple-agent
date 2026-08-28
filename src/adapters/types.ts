@@ -1,3 +1,5 @@
+import type { StreamEvent } from "./stream.js";
+
 /** Shared types for the provider adapter layer. */
 
 export type ProviderId = "deepseek" | "claude";
@@ -52,9 +54,10 @@ export interface ConversationResult {
 
 /**
  * The single test seam: one provider adapter per provider.
- * `chat` sends the full conversation (plus optional tool schemas) and
- * returns the provider-specific raw response, which the normalize step
- * maps onto ConversationResult.
+ * `chatStream` is the primitive — an async iterable of text deltas plus a
+ * final `done` event carrying the accumulated raw response. `chat` is its
+ * accumulation (one wire path), kept for non-streaming call sites like the
+ * summarizer.
  */
 export interface ProviderAdapter {
   readonly info: ProviderInfo;
@@ -63,6 +66,11 @@ export interface ProviderAdapter {
     messages: NormalizedMessage[];
     tools?: ToolSpec[];
   }): Promise<ProviderRawResponse>;
+  chatStream(input: {
+    model: string;
+    messages: NormalizedMessage[];
+    tools?: ToolSpec[];
+  }): AsyncIterable<StreamEvent>;
 }
 
 /** Raw response shape for OpenAI-compatible APIs (DeepSeek). */

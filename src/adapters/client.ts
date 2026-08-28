@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
 import { PROVIDERS } from "./providers.js";
+import { accumulateClaudeEvents, accumulateDeepseekChunks, collectStream, type DeepseekChunk, type StreamEvent } from "./stream.js";
 import type {
   ClaudeRaw,
   DeepseekRaw,
@@ -50,7 +51,11 @@ class DeepseekAdapter implements ProviderAdapter {
     });
   }
 
-  async chat({
+  chat(input: { model: string; messages: NormalizedMessage[]; tools?: ToolSpec[] }): Promise<DeepseekRaw> {
+    return collectStream(this.chatStream(input)) as Promise<DeepseekRaw>;
+  }
+
+  async *chatStream({
     model,
     messages,
     tools,
@@ -58,30 +63,22 @@ class DeepseekAdapter implements ProviderAdapter {
     model: string;
     messages: NormalizedMessage[];
     tools?: ToolSpec[];
-  }): Promise<DeepseekRaw> {
-    const completion = await this.client.chat.completions.create({
+  }): AsyncGenerator<StreamEvent> {
+    const stream = await this.client.chat.completions.create({
       model,
       messages: toOpenAIMessages(messages) as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
       tools: tools?.length ? (toOpenAITools(tools) as unknown as OpenAI.Chat.Completions.ChatCompletionTool[]) : undefined,
-      stream: false,
+      stream: true,
+      stream_options: { include_usage: true },
     });
-    const message = completion.choices[0]?.message;
-    const toolCalls = message?.tool_calls
-      ?.map((tc) => {
-        const fn = (tc as { function?: { name?: unknown; arguments?: unknown } }).function;
-        if (!fn || typeof fn.name !== "string") return null;
-        return {
-          id: tc.id,
-          type: tc.type,
-          function: { name: fn.name, arguments: String(fn.arguments ?? "{}") },
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null);
-    return {
-      model: completion.model,
-      choices: [{ message: { content: message?.content ?? null, tool_calls: toolCalls } }],
-      usage: completion.usage,
-    };
+    const chunks: DeepseekChunk[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk as unknown as DeepseekChunk);
+      for (const choice of chunk.choices ?? []) {
+        if (choice.delta?.content) yield { type: "text", text: choice.delta.content };
+      }
+    }
+    yield { type: "done", raw: accumulateDeepseekChunks(chunks) };
   }
 }
 
@@ -97,7 +94,11 @@ class ClaudeAdapter implements ProviderAdapter {
     });
   }
 
-  async chat({
+  chat(input: { model: string; messages: NormalizedMessage[]; tools?: ToolSpec[] }): Promise<ClaudeRaw> {
+    return collectStream(this.chatStream(input)) as Promise<ClaudeRaw>;
+  }
+
+  async *chatStream({
     model,
     messages,
     tools,
@@ -105,15 +106,23 @@ class ClaudeAdapter implements ProviderAdapter {
     model: string;
     messages: NormalizedMessage[];
     tools?: ToolSpec[];
-  }): Promise<ClaudeRaw> {
+  }): AsyncGenerator<StreamEvent> {
     const { system, messages: wire } = toAnthropicMessages(messages);
-    const message = await this.client.messages.create({
+    const stream = await this.client.messages.create({
       model,
       max_tokens: this.info.maxTokens ?? 4096,
       system,
       messages: wire as Anthropic.MessageParam[],
       tools: tools?.length ? (toAnthropicTools(tools) as unknown as Anthropic.ToolUnion[]) : undefined,
+      stream: true,
     });
-    return { model: message.model, content: message.content, usage: message.usage };
+    const events: Parameters<typeof accumulateClaudeEvents>[0] = [];
+    for await (const event of stream) {
+      events.push(event as (typeof events)[number]);
+      if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+        yield { type: "text", text: event.delta.text };
+      }
+    }
+    yield { type: "done", raw: accumulateClaudeEvents(events) };
   }
 }

@@ -1,5 +1,6 @@
 import type { NormalizedMessage, ProviderAdapter, ToolSpec } from "../adapters/types.js";
 import { normalizeResponse } from "../adapters/normalize.js";
+import { collectStream } from "../adapters/stream.js";
 import {
   compactMessages,
   estimateConversation,
@@ -43,6 +44,10 @@ export interface RunAgentInput {
   policy?: { rules: PolicyRule[]; protectedPaths: string[] };
   /** Human confirmation for ask decisions; defaults to a TTY readline prompt. */
   ask?: (message: string) => Promise<boolean>;
+  /** Receives assistant text deltas as they stream in (live output). */
+  onText?: (text: string) => void;
+  /** Lifecycle: "waiting" before each model call, "streaming" on first text, "done" at the end. */
+  onPhase?: (phase: "waiting" | "streaming" | "done") => void;
 }
 
 export interface AgentResult {
@@ -79,6 +84,19 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
     protectedPaths: DEFAULT_PROTECTED_PATHS,
   };
   const ask = input.ask ?? defaultAsk;
+  const onPhase = input.onPhase;
+  const onText = input.onText
+    ? (() => {
+        let streaming = false;
+        return (t: string) => {
+          if (!streaming) {
+            streaming = true;
+            onPhase?.("streaming");
+          }
+          input.onText!(t);
+        };
+      })()
+    : undefined;
 
   const messages: NormalizedMessage[] = [];
   if (input.systemPrompt) messages.push({ role: "system", content: input.systemPrompt });
@@ -129,71 +147,79 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
     }
   };
 
-  for (let round = 0; ; round++) {
-    await maybeCompact();
+  try {
+    for (let round = 0; ; round++) {
+      await maybeCompact();
 
-    const raw = await input.adapter.chat({ model: input.model, messages, tools });
-    const result = normalizeResponse(input.adapter.info.id, raw);
-    budget.recordUsage(result.usage?.promptTokens);
+      onPhase?.("waiting");
+      const raw = await collectStream(
+        input.adapter.chatStream({ model: input.model, messages, tools }),
+        onText,
+      );
+      const result = normalizeResponse(input.adapter.info.id, raw);
+      budget.recordUsage(result.usage?.promptTokens);
 
-    if (!result.toolCalls || result.toolCalls.length === 0) {
-      return {
-        text: result.content ?? "",
-        model: result.model,
-        iterations: round + 1,
-        toolCallsMade,
-        aborted: false,
-        compactions: budget.compactions,
-      };
-    }
-
-    if (round >= maxIterations) {
-      return {
-        text: result.content ?? "",
-        model: result.model,
-        iterations: round + 1,
-        toolCallsMade,
-        aborted: true,
-        compactions: budget.compactions,
-      };
-    }
-
-    messages.push({ role: "assistant", content: result.content, toolCalls: result.toolCalls });
-    for (const call of result.toolCalls) {
-      toolCallsMade += 1;
-      const tool = TOOLS[call.name];
-      let content: string;
-      if (!tool) {
-        content = `Unknown tool: ${call.name}. Available: ${Object.keys(TOOLS).join(", ")}`;
-        messages.push({ role: "tool", toolCallId: call.id, content });
-        continue;
+      if (!result.toolCalls || result.toolCalls.length === 0) {
+        return {
+          text: result.content ?? "",
+          model: result.model,
+          iterations: round + 1,
+          toolCallsMade,
+          aborted: false,
+          compactions: budget.compactions,
+        };
       }
 
-      const toolInput = (call.input ?? {}) as Record<string, unknown>;
-      const candidate = candidateFor(call.name, toolInput);
-      const decision = evaluatePolicy(candidate, policy.rules, policy.protectedPaths);
+      if (round >= maxIterations) {
+        return {
+          text: result.content ?? "",
+          model: result.model,
+          iterations: round + 1,
+          toolCallsMade,
+          aborted: true,
+          compactions: budget.compactions,
+        };
+      }
 
-      const execute = async (): Promise<string> => {
-        try {
-          return String(await tool.execute(toolInput, input.toolContext));
-        } catch (e) {
-          return e instanceof Error ? e.message : String(e);
+      messages.push({ role: "assistant", content: result.content, toolCalls: result.toolCalls });
+      for (const call of result.toolCalls) {
+        toolCallsMade += 1;
+        const tool = TOOLS[call.name];
+        let content: string;
+        if (!tool) {
+          content = `Unknown tool: ${call.name}. Available: ${Object.keys(TOOLS).join(", ")}`;
+          messages.push({ role: "tool", toolCallId: call.id, content });
+          continue;
         }
-      };
 
-      if (decision.action === "deny") {
-        content = policyFeedbackMessage(decision, candidate);
-      } else if (decision.action === "ask") {
-        const allowed = await ask(policyFeedbackMessage(decision, candidate));
-        content = allowed ? await execute() : askRejectedMessage(decision, candidate);
-      } else {
-        content = await execute();
-      }
+        const toolInput = (call.input ?? {}) as Record<string, unknown>;
+        const candidate = candidateFor(call.name, toolInput);
+        const decision = evaluatePolicy(candidate, policy.rules, policy.protectedPaths);
 
-      if (content.length > TOOL_RESULT_CAP) {
-        content = content.slice(0, TOOL_RESULT_CAP) + `\n[TOOL_RESULT_TRUNCATED — ${content.length} chars]`;
+        const execute = async (): Promise<string> => {
+          try {
+            return String(await tool.execute(toolInput, input.toolContext));
+          } catch (e) {
+            return e instanceof Error ? e.message : String(e);
+          }
+        };
+
+        if (decision.action === "deny") {
+          content = policyFeedbackMessage(decision, candidate);
+        } else if (decision.action === "ask") {
+          const allowed = await ask(policyFeedbackMessage(decision, candidate));
+          content = allowed ? await execute() : askRejectedMessage(decision, candidate);
+        } else {
+          content = await execute();
+        }
+
+        if (content.length > TOOL_RESULT_CAP) {
+          content = content.slice(0, TOOL_RESULT_CAP) + `\n[TOOL_RESULT_TRUNCATED — ${content.length} chars]`;
+        }
+        messages.push({ role: "tool", toolCallId: call.id, content });
       }
-      messages.push({ role: "tool", toolCallId: call.id, content });
     }
+  } finally {
+    onPhase?.("done");
   }
 }

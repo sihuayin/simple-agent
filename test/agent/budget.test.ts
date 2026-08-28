@@ -141,6 +141,9 @@ describe("summarizeWithAdapter", () => {
     const adapter = {
       info: { id: "deepseek" as const, name: "DeepSeek", defaultModel: "deepseek-v4-flash", keyEnvVar: "DEEPSEEK_API_KEY", modelEnvVar: "DEEPSEEK_MODEL", baseUrlEnvVar: "DEEPSEEK_BASE_URL", defaultBaseUrl: "https://api.deepseek.com" },
       chat,
+      chatStream: async function* () {
+        throw new Error("chatStream not used by summarizeWithAdapter");
+      },
     };
     const dropped: NormalizedMessage[] = [{ role: "tool", toolCallId: "c1", content: "file content here" }];
     const summary = await summarizeWithAdapter(adapter, "m", dropped);

@@ -4,6 +4,8 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { DeepseekRaw, NormalizedMessage, ProviderAdapter } from "../../src/adapters/types.js";
+import type { StreamEvent } from "../../src/adapters/stream.js";
+import { collectStream } from "../../src/adapters/stream.js";
 import { runAgent } from "../../src/agent/loop.js";
 import { toolSpecs } from "../../src/tools/registry.js";
 import type { ToolContext } from "../../src/tools/types.js";
@@ -49,13 +51,31 @@ function fakeAdapter(script: DeepseekRaw[]): ProviderAdapter & { chats: Normaliz
   return {
     info: { id: "deepseek", name: "DeepSeek", defaultModel: "deepseek-v4-flash", keyEnvVar: "DEEPSEEK_API_KEY", modelEnvVar: "DEEPSEEK_MODEL", baseUrlEnvVar: "DEEPSEEK_BASE_URL", defaultBaseUrl: "https://api.deepseek.com", contextWindow: 20000 },
     async chat(input) {
+      return collectStream(this.chatStream(input));
+    },
+    async *chatStream(input): AsyncGenerator<StreamEvent> {
       calls.push(input.messages);
       const next = script.shift();
       if (!next) throw new Error("script exhausted");
-      return next;
+      yield { type: "done", raw: next };
     },
     chats: calls,
   };
+}
+
+/** 让 fake 像真实适配器一样先发 text 增量再 done（贴近流式现实）。 */
+function withTextEvents(adapter: ProviderAdapter & { chats: NormalizedMessage[][] }): ProviderAdapter {
+  const orig = adapter.chatStream.bind(adapter);
+  adapter.chatStream = async function* (input) {
+    for await (const e of orig(input)) {
+      if (e.type === "done") {
+        const content = (e.raw as DeepseekRaw).choices[0]?.message.content ?? "";
+        if (content) yield { type: "text", text: content };
+      }
+      yield e;
+    }
+  };
+  return adapter;
 }
 
 describe("runAgent", () => {
@@ -258,6 +278,68 @@ describe("runAgent", () => {
     } finally {
       await fs.rm(path.join(root, ".rules"), { force: true });
     }
+  });
+
+  it("streams text deltas to onText in order", async () => {
+    const adapter = fakeAdapter([finalRaw("最终答案")]);
+    const texts: string[] = [];
+    // 覆盖 chatStream 为分段发送文本增量
+    const streamy = adapter;
+    const orig = streamy.chatStream.bind(streamy);
+    (streamy as { chatStream: typeof orig }).chatStream = async function* (input) {
+      for await (const e of orig(input)) {
+        if (e.type === "done") {
+          const raw = e.raw as DeepseekRaw;
+          const content = raw.choices[0]?.message.content ?? "";
+          yield { type: "text", text: content.slice(0, 2) };
+          yield { type: "text", text: content.slice(2) };
+          yield e;
+        } else {
+          yield e;
+        }
+      }
+    };
+    await runAgent({ adapter: streamy, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, onText: (t) => texts.push(t) });
+    expect(texts).toEqual(["最终", "答案"]);
+  });
+
+  it("emits waiting -> streaming -> done phases in order", async () => {
+    const adapter = withTextEvents(fakeAdapter([finalRaw("hi")]));
+    const phases: string[] = [];
+    await runAgent({
+      adapter,
+      model: "m",
+      userPrompt: "go",
+      tools: toolSpecs(),
+      toolContext: ctx,
+      onText: () => undefined,
+      onPhase: (p) => phases.push(p),
+    });
+    expect(phases).toEqual(["waiting", "streaming", "done"]);
+  });
+
+  it("emits waiting -> done (no streaming) for tool-call rounds", async () => {
+    const adapter = withTextEvents(fakeAdapter([toolUseRaw("read_file", "c1", { path: "greet.txt" }), finalRaw("好了")]));
+    const phases: string[] = [];
+    const texts: string[] = [];
+    await runAgent({
+      adapter,
+      model: "m",
+      userPrompt: "go",
+      tools: toolSpecs(),
+      toolContext: ctx,
+      onText: (t) => texts.push(t),
+      onPhase: (p) => phases.push(p),
+    });
+    // 第一轮无文本（工具调用）；第二轮有文本
+    expect(phases).toEqual(["waiting", "waiting", "streaming", "done"]);
+    expect(texts).toEqual(["好了"]);
+  });
+
+  it("works without onText/onPhase (no-stream consumers)", async () => {
+    const adapter = fakeAdapter([finalRaw("plain")]);
+    const result = await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx });
+    expect(result.text).toBe("plain");
   });
 
   it("force-compacts on /compact even below the threshold", async () => {
