@@ -4,6 +4,7 @@ import path from "node:path";
 /**
  * MCP 服务器配置：工作区 .mcp.json（Claude Desktop 格式）。
  * 缺失 → 无服务器；JSON 损坏 / 条目非法 → 大声失败（与 .rules/.hooks 一致）。
+ * env 值支持 ${VAR} 插值（从 process.env 读取；未定义 → 空字符串，server 连接会失败并被跳过）。
  */
 
 export interface McpStdioServer {
@@ -67,16 +68,26 @@ function parseServer(name: string, raw: unknown): McpServerConfig {
     if (e.env !== undefined && (typeof e.env !== "object" || e.env === null || Array.isArray(e.env))) {
       throw new Error(`.mcp.json 服务器 "${name}" 的 env 应为对象`);
     }
+    const rawEnv = (e.env ?? {}) as Record<string, unknown>;
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rawEnv)) {
+      env[k] = interpolateEnv(String(v));
+    }
     return {
       name,
       type: "stdio",
       command: e.command as string,
       args: (e.args as string[]) ?? [],
-      env: e.env as Record<string, string> | undefined,
+      env: Object.keys(env).length > 0 ? env : undefined,
     };
   }
   if (hasUrl) {
     return { name, type: "http", url: e.url as string };
   }
   throw new Error(`.mcp.json 服务器 "${name}" 需要 command（stdio）或 url（http）`);
+}
+
+/** `${VAR}` → process.env[VAR]（未定义 → ""）。其余原样保留。 */
+export function interpolateEnv(value: string): string {
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, v: string) => process.env[v] ?? "");
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadMcpConfig } from "../../src/mcp/config.js";
+import { interpolateEnv, loadMcpConfig } from "../../src/mcp/config.js";
 
 async function withMcpJson(content: string | null, fn: (workspace: string) => Promise<void>) {
   const dir = await mkdtemp(path.join(tmpdir(), "sa-mcp-"));
@@ -70,5 +70,34 @@ describe("loadMcpConfig", () => {
     await withMcpJson(JSON.stringify({ mcpServers: {} }), async (ws) => {
       expect(await loadMcpConfig(ws)).toEqual([]);
     });
+  });
+
+  it("env values interpolate ${VAR} from process.env (undefined → empty string)", async () => {
+    process.env.SA_TEST_TOKEN = "sekrit";
+    try {
+      await withMcpJson(
+        JSON.stringify({
+          mcpServers: {
+            gh: {
+              command: "docker",
+              args: ["run", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN"],
+              env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${SA_TEST_TOKEN}", FOO: "literal", MISSING: "${SA_NO_SUCH_VAR}" },
+            },
+          },
+        }),
+        async (ws) => {
+          const [server] = await loadMcpConfig(ws);
+          expect(server!.type).toBe("stdio");
+          if (server!.type !== "stdio") return;
+          expect(server!.env).toEqual({ GITHUB_PERSONAL_ACCESS_TOKEN: "sekrit", FOO: "literal", MISSING: "" });
+        },
+      );
+    } finally {
+      delete process.env.SA_TEST_TOKEN;
+    }
+  });
+
+  it("non-${} braces are left as-is", async () => {
+    expect(interpolateEnv("$HOME and ${HOME} and {x}")).toContain("{x}");
   });
 });

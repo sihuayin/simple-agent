@@ -1,0 +1,3 @@
+[
+  { "tool": "mcp_github_*", "action": "allow" }
+]
