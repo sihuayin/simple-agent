@@ -1,0 +1,30 @@
+# Hook 配置示例：复制为 .hooks 使用（JSON 数组）
+# 事件：PreToolUse（工具执行前，可拦截/改参）/ PostToolUse（执行后）/ SessionStart（会话开始）/ Stop（停止时）
+# handler：command（上下文 JSON 写 stdin，stdout 返回 JSON）或 http（POST JSON，响应体返回 JSON）
+# handler 返回：{} 放行 | { "blocked": true, "reason": "..." } 拦截 | { "modifiedParams": { ... } } 改参
+# 失败策略：PreToolUse fail-closed（hook 挂了阻止执行），其他事件 fail-open（跳过）
+# PreToolUse hook 按顺序串行：blocked 短路，modifiedParams 链式传给下一个。内置安全策略永远先于 hook。
+[
+  {
+    "name": "no-rm-force",
+    "event": "PreToolUse",
+    "matcher": "bash",
+    "handler": { "type": "command", "command": "node guard.mjs" }
+  },
+  {
+    "name": "post-write-lint",
+    "event": "PostToolUse",
+    "matcher": "write_file",
+    "handler": { "type": "http", "url": "http://localhost:8787/lint" }
+  },
+  {
+    "name": "session-init",
+    "event": "SessionStart",
+    "handler": { "type": "command", "command": "node init-env.mjs" }
+  },
+  {
+    "name": "notify-done",
+    "event": "Stop",
+    "handler": { "type": "http", "url": "http://localhost:8787/agent-done" }
+  }
+]

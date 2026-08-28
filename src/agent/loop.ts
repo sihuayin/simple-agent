@@ -1,6 +1,7 @@
 import type { NormalizedMessage, ProviderAdapter, ToolSpec } from "../adapters/types.js";
 import { normalizeResponse } from "../adapters/normalize.js";
 import { collectStream } from "../adapters/stream.js";
+import { dispatchEvent, loadHooks, runPreToolUseHooks, type HookConfig } from "./hooks.js";
 import {
   compactMessages,
   estimateConversation,
@@ -44,6 +45,8 @@ export interface RunAgentInput {
   policy?: { rules: PolicyRule[]; protectedPaths: string[] };
   /** Human confirmation for ask decisions; defaults to a TTY readline prompt. */
   ask?: (message: string) => Promise<boolean>;
+  /** Hooks (PreToolUse/PostToolUse/SessionStart/Stop); defaults load .hooks from the workspace. */
+  hooks?: HookConfig[];
   /** Receives assistant text deltas as they stream in (live output). */
   onText?: (text: string) => void;
   /** Lifecycle: "waiting" before each model call, "streaming" on first text, "done" at the end. */
@@ -84,6 +87,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
     protectedPaths: DEFAULT_PROTECTED_PATHS,
   };
   const ask = input.ask ?? defaultAsk;
+  const hooks = input.hooks ?? (await loadHooks(input.toolContext.workspace));
   const onPhase = input.onPhase;
   const onText = input.onText
     ? (() => {
@@ -104,6 +108,12 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
 
   let toolCallsMade = 0;
   let forceCompact = input.forceCompact === true;
+
+  // SessionStart：会话初始化 hook（fail-open）
+  await dispatchEvent(hooks, "SessionStart", { workspace: input.toolContext.workspace });
+
+  // Stop 载荷：在 finally 中随最终结果一起发送
+  let stopInfo = { finalText: "", iterations: 0, toolCallsMade: 0, aborted: false };
 
   const estimate = (msgs: NormalizedMessage[]) => estimateConversation(msgs, fixedTokens);
 
@@ -160,7 +170,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       budget.recordUsage(result.usage?.promptTokens);
 
       if (!result.toolCalls || result.toolCalls.length === 0) {
-        return {
+        const res = {
           text: result.content ?? "",
           model: result.model,
           iterations: round + 1,
@@ -168,10 +178,12 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
           aborted: false,
           compactions: budget.compactions,
         };
+        stopInfo = { finalText: res.text, iterations: res.iterations, toolCallsMade, aborted: false };
+        return res;
       }
 
       if (round >= maxIterations) {
-        return {
+        const res = {
           text: result.content ?? "",
           model: result.model,
           iterations: round + 1,
@@ -179,6 +191,8 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
           aborted: true,
           compactions: budget.compactions,
         };
+        stopInfo = { finalText: res.text, iterations: res.iterations, toolCallsMade, aborted: true };
+        return res;
       }
 
       messages.push({ role: "assistant", content: result.content, toolCalls: result.toolCalls });
@@ -196,21 +210,41 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
         const candidate = candidateFor(call.name, toolInput);
         const decision = evaluatePolicy(candidate, policy.rules, policy.protectedPaths);
 
-        const execute = async (): Promise<string> => {
+        const execute = async (params?: Record<string, unknown>): Promise<string> => {
           try {
-            return String(await tool.execute(toolInput, input.toolContext));
+            return String(await tool.execute(params ?? toolInput, input.toolContext));
           } catch (e) {
             return e instanceof Error ? e.message : String(e);
           }
         };
 
+        // 所有实际执行的调用都走 PreToolUse hook 链（policy 之后——hook 不能绕过内置安全；执行之前）
+        const runWithHooks = async (): Promise<string> => {
+          const hookOutcome = await runPreToolUseHooks(hooks, {
+            tool: call.name,
+            input: toolInput,
+            workspace: input.toolContext.workspace,
+          });
+          if (hookOutcome.action !== "allow") return hookOutcome.message ?? "[hook blocked]";
+          let out = await execute(hookOutcome.params);
+          if (hookOutcome.message) out = `${hookOutcome.message}\n${out}`;
+          await dispatchEvent(hooks, "PostToolUse", {
+            tool: call.name,
+            input: hookOutcome.params,
+            result: out,
+            workspace: input.toolContext.workspace,
+          });
+          return out;
+        };
+
+        // 执行许可：deny → 直接拒绝；ask → 人类确认后走 hooks；allow → 走 hooks
         if (decision.action === "deny") {
           content = policyFeedbackMessage(decision, candidate);
         } else if (decision.action === "ask") {
           const allowed = await ask(policyFeedbackMessage(decision, candidate));
-          content = allowed ? await execute() : askRejectedMessage(decision, candidate);
+          content = allowed ? await runWithHooks() : askRejectedMessage(decision, candidate);
         } else {
-          content = await execute();
+          content = await runWithHooks();
         }
 
         if (content.length > TOOL_RESULT_CAP) {
@@ -220,6 +254,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       }
     }
   } finally {
+    await dispatchEvent(hooks, "Stop", { workspace: input.toolContext.workspace, ...stopInfo });
     onPhase?.("done");
   }
 }

@@ -342,6 +342,72 @@ describe("runAgent", () => {
     expect(result.text).toBe("plain");
   });
 
+  it("PreToolUse hook blocks a call: tool not executed, model sees [hook blocked]", async () => {
+    const adapter = fakeAdapter([toolUseRaw("read_file", "c1", { path: "definitely-missing-file.txt" }), finalRaw("done")]);
+    const hooks = [{
+      name: "guard", event: "PreToolUse" as const, matcher: "read_file",
+      handler: { type: "command" as const, command: `node -e "const d=require('fs').readFileSync(0,'utf8');const c=JSON.parse(d);console.log(JSON.stringify({blocked:true,reason:'guard-no'}))"` },
+    }];
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, hooks });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[hook blocked]");
+    expect(toolMsg.content).toContain("guard-no");
+    expect(toolMsg.content).not.toContain("ENOENT"); // 工具确实没执行（否则会读到不存在的文件报错）
+  });
+
+  it("PreToolUse modifiedParams rewrites the executed arguments", async () => {
+    const adapter = fakeAdapter([toolUseRaw("read_file", "c1", { path: "x.txt" }), finalRaw("done")]);
+    const hooks = [{
+      name: "prefix", event: "PreToolUse" as const, matcher: "read_file",
+      handler: { type: "command" as const, command: `node -e "const d=require('fs').readFileSync(0,'utf8');const c=JSON.parse(d);console.log(JSON.stringify({modifiedParams:{path:'greet.txt'}}))"` },
+    }];
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, hooks });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[hook modified input]");
+    expect(toolMsg.content).toContain("hello from greet.txt"); // 实际读的是被改后的路径
+  });
+
+  it("SessionStart and Stop fire; Stop carries the final text", async () => {
+    const calls: { event: string; finalText?: string }[] = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body)) as { event: string; finalText?: string });
+      return { ok: true, status: 200, text: async () => "{}" } as Response;
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const adapter = fakeAdapter([finalRaw("final answer")]);
+      const hooks = [
+        { name: "init", event: "SessionStart" as const, handler: { type: "http" as const, url: "https://init.example" } },
+        { name: "notify", event: "Stop" as const, handler: { type: "http" as const, url: "https://notify.example" } },
+      ];
+      await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, hooks });
+      const events = calls.map((c) => c.event);
+      expect(events).toEqual(["SessionStart", "Stop"]);
+      expect(calls[1]!.finalText).toBe("final answer");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("PostToolUse fires after execution with the result", async () => {
+    const calls: { event: string; result?: string; tool?: string }[] = [];
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body)) as { event: string; result?: string; tool?: string });
+      return { ok: true, status: 200, text: async () => "{}" } as Response;
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const adapter = fakeAdapter([toolUseRaw("read_file", "c1", { path: "greet.txt" }), finalRaw("done")]);
+      const hooks = [{ name: "lint", event: "PostToolUse" as const, matcher: "read_file", handler: { type: "http" as const, url: "https://lint.example" } }];
+      await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), toolContext: ctx, hooks });
+      const post = calls.find((c) => c.event === "PostToolUse")!;
+      expect(post.tool).toBe("read_file");
+      expect(post.result).toContain("hello from greet.txt");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("force-compacts on /compact even below the threshold", async () => {
     const adapter = fakeAdapter([
       toolUseRaw("list_files", "c1", {}),
