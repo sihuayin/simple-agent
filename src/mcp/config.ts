@@ -19,6 +19,8 @@ export interface McpHttpServer {
   name: string;
   type: "http";
   url: string;
+  /** 附加请求头（值支持 ${VAR} 插值），如 Authorization: Bearer ${TOKEN}。 */
+  headers?: Record<string, string>;
 }
 
 export type McpServerConfig = McpStdioServer | McpHttpServer;
@@ -82,7 +84,17 @@ function parseServer(name: string, raw: unknown): McpServerConfig {
     };
   }
   if (hasUrl) {
-    return { name, type: "http", url: e.url as string };
+    let headers: Record<string, string> | undefined;
+    if (e.headers !== undefined) {
+      if (typeof e.headers !== "object" || e.headers === null || Array.isArray(e.headers)) {
+        throw new Error(`.mcp.json 服务器 "${name}" 的 headers 应为对象`);
+      }
+      headers = {};
+      for (const [k, v] of Object.entries(e.headers as Record<string, unknown>)) {
+        headers[k] = interpolateEnv(String(v));
+      }
+    }
+    return { name, type: "http", url: e.url as string, headers };
   }
   throw new Error(`.mcp.json 服务器 "${name}" 需要 command（stdio）或 url（http）`);
 }

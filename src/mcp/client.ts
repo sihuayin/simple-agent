@@ -83,7 +83,9 @@ export class McpManager {
               env: config.env,
               // stderr 默认 inherit：server 日志直接打到终端，方便排查
             })
-          : new StreamableHTTPClientTransport(new URL(config.url));
+          : new StreamableHTTPClientTransport(new URL(config.url), {
+              requestInit: config.headers ? { headers: config.headers } : undefined,
+            });
       await client.connect(transport, { timeout: CONNECT_TIMEOUT_MS });
       const { tools } = await client.listTools({}, { timeout: CONNECT_TIMEOUT_MS });
       for (const t of tools) {

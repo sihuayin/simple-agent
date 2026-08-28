@@ -98,6 +98,42 @@ describe("loadMcpConfig", () => {
   });
 
   it("non-${} braces are left as-is", async () => {
-    expect(interpolateEnv("$HOME and ${HOME} and {x}")).toContain("{x}");
+    await withMcpJson(JSON.stringify({ mcpServers: {} }), async () => {
+      expect(interpolateEnv("$HOME and ${HOME} and {x}")).toContain("{x}");
+      expect(interpolateEnv("a${UNSET_VAR}b")).toBe("ab");
+    });
+  });
+
+  it("http servers support headers with ${VAR} interpolation", async () => {
+    process.env.SA_TEST_TOKEN = "ghp_sekrit";
+    try {
+      await withMcpJson(
+        JSON.stringify({
+          mcpServers: {
+            gh: { url: "https://api.githubcopilot.com/mcp/", headers: { Authorization: "Bearer ${SA_TEST_TOKEN}", "X-Static": "v" } },
+          },
+        }),
+        async (ws) => {
+          const [server] = await loadMcpConfig(ws);
+          expect(server).toEqual({
+            name: "gh",
+            type: "http",
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: { Authorization: "Bearer ghp_sekrit", "X-Static": "v" },
+          });
+        },
+      );
+    } finally {
+      delete process.env.SA_TEST_TOKEN;
+    }
+  });
+
+  it("http headers must be an object", async () => {
+    await withMcpJson(
+      JSON.stringify({ mcpServers: { gh: { url: "https://x", headers: "Bearer x" } } }),
+      async (ws) => {
+        await expect(loadMcpConfig(ws)).rejects.toThrow(/gh/);
+      },
+    );
   });
 });
