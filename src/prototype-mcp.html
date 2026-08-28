@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型：MCP 支持（服务器连接、工具发现、调用往返）</title>
+<style>
+  :root {
+    --accent: #7c3aed; --accent-soft: #f5f3ff; --accent-border: #ddd6fe;
+    --ink: #1e293b; --muted: #64748b; --border: #e2e8f0;
+    --ok: #059669; --err: #dc2626; --warn: #b45309; --blue: #2563eb;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); margin: 0; background: #f8fafc; line-height: 1.6; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 32px 20px 90px; }
+  header h1 { font-size: 22px; margin: 0 0 6px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 999px; padding: 2px 10px; margin-bottom: 10px; }
+  .question { background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; font-size: 13.5px; margin: 10px 0 20px; }
+  section { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700; }
+  .pill.state-ready { background: #ecfdf5; color: var(--ok); border: 1px solid #bbf7d0; }
+  .pill.state-connecting { background: #eff6ff; color: var(--blue); border: 1px solid #bfdbfe; }
+  .pill.state-failed { background: #fef2f2; color: var(--err); border: 1px solid #fecaca; }
+  .pill.state-closed { background: #f1f5f9; color: var(--muted); border: 1px solid #e2e8f0; }
+  .pill.mcp { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .pill.builtin { background: #ecfdf5; color: var(--ok); border: 1px solid #bbf7d0; }
+  .kv { display: grid; grid-template-columns: 190px 1fr; gap: 3px 12px; font-size: 13.5px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-weight: 500; font-family: var(--mono); font-size: 12.5px; }
+  .callout { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .callout.ok { background: #ecfdf5; color: var(--ok); border-color: #bbf7d0; }
+  .callout.warn { background: #fffbeb; color: var(--warn); border-color: #fde68a; }
+  .callout.err { background: #fef2f2; color: var(--err); border-color: #fecaca; }
+  .trace { font-family: var(--mono); font-size: 12px; background: #0f172a; color: #cbd5e1; border-radius: 8px; padding: 12px; max-height: 300px; overflow-y: auto; white-space: pre-wrap; }
+  .trace .tx { color: #93c5fd; } .trace .rx { color: #6ee7b7; } .trace .err { color: #fca5a5; } .trace .warn { color: #fbbf24; } .trace .meta { color: #64748b; }
+  .row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+  .row .t { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .buttons button { font-size: 13px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--border); background: #fff; color: var(--ink); cursor: pointer; }
+  .buttons button:hover { border-color: var(--accent); color: var(--accent); }
+  .buttons button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .buttons button.warn { background: #fffbeb; color: var(--warn); border-color: #fde68a; }
+  .buttons button:disabled { opacity: .4; cursor: default; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tabs button { font-size: 12.5px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .step { font-size: 13px; margin: 6px 0 4px; color: var(--muted); }
+  .step b { color: var(--ink); }
+  .scenario { font-size: 13px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 8px 0 10px; }
+  table.tools { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.tools th, table.tools td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  table.tools th { color: var(--muted); font-weight: 600; }
+  table.tools .name { font-family: var(--mono); color: var(--accent); }
+  pre.code { font-family: var(--mono); font-size: 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow-x: auto; }
+  input, select { font-family: var(--mono); font-size: 12.5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="badge">原型 · LOGIC</span>
+  <h1>MCP 支持：连接状态机、工具发现、调用往返</h1>
+  <div class="question">
+    <b>要回答的问题：</b>把外部工具服务器（本地 stdio 子进程 / 远程 HTTP）接入 simple-agent 的模型是否成立？
+    重点推演：① 每个 server 的<b>连接状态机</b>（spawn → 握手 → 工具列表 → ready / failed → 关闭）；② 多 server 工具合并与<b>命名规则</b>（`mcp:server:tool`）；③ <b>失败语义</b>（一个 server 连接失败：跳过继续还是整个会话退出？调用超时/崩溃/返回 isError 时模型看到什么）；④ <b>安全覆盖</b>（黑盒工具的默认兜底）；⑤ SDK vs 手写客户端。
+    <br>点「连接全部」开始，底部有 6 个引导走查。
+  </div>
+</header>
+
+<section>
+  <h2>当前状态</h2>
+  <div class="kv">
+    <dt>会话阶段</dt><dd id="s-phase">尚未开始</dd>
+    <dt>已连接服务器</dt><dd id="s-servers">—</dd>
+    <dt>模型可见工具数</dt><dd id="s-tools">8 个内置</dd>
+    <dt>最近一次 MCP 调用</dt><dd id="s-call">—</dd>
+    <dt>模型收到的调用结果</dt><dd id="s-result">—</dd>
+    <dt>失败服务器</dt><dd id="s-failed">—</dd>
+  </div>
+  <div id="callout" class="callout" style="display:none"></div>
+</section>
+
+<section>
+  <h2>模拟服务器（浏览器内假 transport——不真 spawn，但协议消息是真的 JSON-RPC 形状）</h2>
+  <div id="servers"></div>
+</section>
+
+<section>
+  <h2>自由玩耍</h2>
+  <div class="buttons">
+    <button id="btn-connect" class="primary">连接全部</button>
+    <button id="btn-close" class="warn" disabled>结束会话（关闭全部）</button>
+  </div>
+  <div style="margin-top:10px">
+    <label>调用工具：</label>
+    <select id="call-tool" disabled></select>
+    <label>参数（JSON）：</label>
+    <input id="call-args" size="34" value="{&quot;path&quot;:&quot;README.md&quot;}">
+    <button id="btn-call" class="primary" disabled>调用</button>
+  </div>
+</section>
+
+<section>
+  <h2>协议时间线（JSON-RPC 消息序列）</h2>
+  <div class="trace" id="trace"></div>
+</section>
+
+<section>
+  <h2>工具合并表（模型可见）</h2>
+  <table class="tools" id="tools-table">
+    <thead><tr><th>工具名（模型看到的）</th><th>来源</th><th>描述</th><th>参数</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<section>
+  <h2>引导走查</h2>
+  <div class="tabs" id="tabs"></div>
+  <div id="walkthrough"></div>
+</section>
+
+</div>
+
+<script>
+"use strict";
+/* ================= 纯逻辑层：模拟 MCP 客户端 ================= */
+
+// ---- 四个模拟 server（假 transport，真 JSON-RPC 消息形状）----
+// 每个 server: { id, name, type: "stdio"|"http", connectDelay, crashAfter, tools: [{name, description, inputSchema}] }
+const SERVERS = [
+  { name: "files", type: "stdio", connectDelay: 350, crashAfter: 0,
+    tools: [
+      { name: "read", description: "读取指定路径的文本文件", inputSchema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+      { name: "write", description: "写入文本到文件", inputSchema: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] } },
+      { name: "list", description: "列出目录内容", inputSchema: { type: "object", properties: { dir: { type: "string" } } } },
+    ] },
+  { name: "shell", type: "stdio", connectDelay: 250, crashAfter: 0,
+    tools: [
+      { name: "execute", description: "在服务器环境执行任意 shell 命令", inputSchema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] } },
+    ] },
+  { name: "slow", type: "http", connectDelay: 4000, crashAfter: 0, // 握手超时（默认 3s）
+    tools: [] },
+  { name: "crash", type: "stdio", connectDelay: 300, crashAfter: 900, // 握手后进程崩溃
+    tools: [
+      { name: "unstable", description: "运气不好的工具", inputSchema: { type: "object" } },
+    ] },
+];
+
+// ---- 状态机 ----
+// per server: disconnected → connecting(握手) → listing → ready | failed → closing → closed
+const State = { DISCONNECTED: "disconnected", CONNECTING: "connecting", LISTING: "listing", READY: "ready", FAILED: "failed", CLOSING: "closing", CLOSED: "closed" };
+
+class FakeMcpServer {
+  constructor(def) {
+    this.def = def;
+    this.state = State.DISCONNECTED;
+    this.tools = def.tools;
+    this.received = 0; // 调用计数（模拟 server 端行为差异）
+  }
+  async connect() {
+    if (this.state !== State.DISCONNECTED) throw new Error(`state=${this.state}`);
+    this.state = State.CONNECTING;
+    log(`[${this.def.name}] spawn (${this.def.type}) → 等待握手`, "meta");
+    await delay(this.def.connectDelay);
+    if (this.def.connectDelay > 3000) {
+      this.state = State.FAILED;
+      log(`[${this.def.name}] ❌ 握手超时（>3s）→ failed。会话继续，其他 server 不受影响`, "err");
+      return false;
+    }
+    if (this.def.crashAfter > 0) {
+      setTimeout(() => {
+        if (this.state === State.READY) {
+          this.state = State.FAILED;
+          log(`[${this.def.name}] 💥 进程意外退出（crash）→ failed。它的工具从模型可见集里消失`, "err");
+          renderAll();
+        }
+      }, this.def.crashAfter);
+    }
+    // 握手（initialize → initialized notification）
+    this.state = State.LISTING;
+    log(`[${this.def.name}] ⇄ initialize → initialized（协议握手完成）`, "rx");
+    await delay(120);
+    this.state = State.READY;
+    log(`[${this.def.name}] ✓ tools/list → ${this.tools.length} 个工具 → ready`, "rx");
+    return true;
+  }
+  async call(name, args) {
+    if (this.state !== State.READY) throw new Error(`server 未就绪（state=${this.state}）`);
+    this.received += 1;
+    log(`[${this.def.name}] ⇄ tools/call ${name}(${JSON.stringify(args)})`, "tx");
+    await delay(150);
+    // 模拟：shell.execute 返回 isError；unstable 第 2 次调用返回错误
+    if (name === "execute") {
+      const r = { content: [{ type: "text", text: `[模拟] 已执行：${args.command ?? ""}\n退出码 0` }], isError: false };
+      log(`[${this.def.name}] ← 结果（isError=false）`, "rx");
+      return r;
+    }
+    if (name === "unstable" && this.received > 1) {
+      log(`[${this.def.name}] ← isError=true（server 端业务错误）`, "err");
+      return { content: [{ type: "text", text: "该工具暂时不可用" }], isError: true };
+    }
+    const text = name === "read"
+      ? `# README.md（模拟内容）\n\n这是 ${args.path ?? ""} 的文本。` + "占位".repeat(600)
+      : `[模拟] ${name} ok: ${JSON.stringify(args)}`;
+    log(`[${this.def.name}] ← 结果（text 块）`, "rx");
+    return { content: [{ type: "text", text }], isError: false };
+  }
+  async close() {
+    if (this.state === State.CLOSED || this.state === State.FAILED || this.state === State.DISCONNECTED) return;
+    this.state = State.CLOSING;
+    log(`[${this.def.name}] 关闭连接…`, "meta");
+    await delay(80);
+    this.state = State.CLOSED;
+    log(`[${this.def.name}] ✓ closed`, "meta");
+  }
+}
+
+// ---- 管理器（对应将来 src/mcp/client.ts 的 McpManager）----
+const servers = SERVERS.map((d) => new FakeMcpServer(d));
+const toolTable = new Map(); // "mcp:server:tool" → { server, def }
+
+function mcpToolName(serverName, toolName) { return `mcp:${serverName}:${toolName}`; }
+
+function mergeTools() {
+  toolTable.clear();
+  let n = 0;
+  for (const s of servers) {
+    if (s.state !== State.READY) continue;
+    for (const t of s.tools) {
+      const full = mcpToolName(s.def.name, t.name);
+      toolTable.set(full, { server: s, def: t });
+      n += 1;
+    }
+  }
+  return n;
+}
+
+function serializedResult(r) {
+  if (r.isError) return `[mcp error] ${r.content.map((c) => c.text ?? "").join("\n")}`;
+  return r.content.map((c) => c.text ?? "").join("\n");
+}
+
+async function connectAll() {
+  phase = "连接中…";
+  renderAll();
+  log("— 连接全部：并行启动，每个 server 独立（失败隔离）—", "meta");
+  const results = await Promise.allSettled(servers.map((s) => s.connect()));
+  const ready = servers.filter((s) => s.state === State.READY).length;
+  const failed = servers.filter((s) => s.state === State.FAILED).length;
+  const mcpN = mergeTools();
+  if (failed > 0) {
+    setCallout(`⚠ 有 ${failed} 个 server 连接失败（slow：超时；crash：崩溃）——已跳过，会话继续。`,
+      "warn", `失败 server：${servers.filter((s) => s.state === State.FAILED).map((s) => s.def.name).join("、")}`);
+  } else {
+    setCallout(`全部 ${ready} 个 server 就绪，发现 ${mcpN} 个 MCP 工具。`, "ok");
+  }
+  phase = `已连接 ${ready} 个（${failed} 个失败）`;
+  renderAll();
+}
+
+async function closeAll() {
+  log("— 结束会话：finally 中关闭全部连接 —", "meta");
+  await Promise.allSettled(servers.map((s) => s.close()));
+  phase = "已结束";
+  setCallout("全部连接已关闭。crash server 崩溃后，剩余 server 正常关闭。", "ok");
+  renderAll();
+}
+
+async function callTool(fullName, args) {
+  const entry = toolTable.get(fullName);
+  if (!entry) { setCallout(`未知工具：${fullName}`, "err"); return; }
+  try {
+    const r = await entry.server.call(entry.def.name, args);
+    const text = serializedResult(r);
+    const truncated = text.length > 200 ? `${text.slice(0, 200)}…[截断 ${text.length} 字符]` : text;
+    sResult = `${r.isError ? "⚠ " : "✓ "}${truncated}`;
+    if (r.isError) setCallout(`MCP server 返回 isError=true → 模型看到 [mcp error] 前缀，loop 继续`, "err");
+    else setCallout(`调用成功。长结果按现有 8000 字符上限截断。`, "ok");
+  } catch (e) {
+    sResult = `✗ ${e.message}`;
+    setCallout(`调用失败：${e.message}（loop 不中断，工具结果里带错误）`, "err");
+  }
+  renderAll();
+}
+
+// ---- 状态/渲染 ----
+let phase = "尚未开始";
+let sCall = "—";
+let sResult = "—";
+let callout = null; // {text, kind}
+
+function log(line, cls = "") {
+  const el = document.getElementById("trace");
+  const d = document.createElement("div");
+  d.className = cls;
+  d.textContent = line;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function setCallout(text, kind = "", extra = "") {
+  callout = { text, kind, extra };
+  const el = document.getElementById("callout");
+  el.style.display = "block";
+  el.className = `callout ${kind}`;
+  el.textContent = text + (extra ? `（${extra}）` : "");
+}
+
+function serverPill(s) {
+  const map = {
+    [State.READY]: "state-ready", [State.CONNECTING]: "state-connecting", [State.LISTING]: "state-connecting",
+    [State.FAILED]: "state-failed", [State.CLOSED]: "state-closed", [State.CLOSING]: "state-connecting",
+    [State.DISCONNECTED]: "state-closed",
+  };
+  return `<span class="pill ${map[s.state]}">${s.state}${s.state === State.READY ? ` · ${s.tools.length} 工具` : ""}</span>`;
+}
+
+function renderServers() {
+  const box = document.getElementById("servers");
+  box.innerHTML = servers.map((s) => `
+    <div class="row"><b style="font-family:var(--mono)">${s.def.name}</b>
+      <span class="t"> ${s.def.type} · ${s.def.connectDelay > 3000 ? "握手 4s（>3s 超时）" : s.def.crashAfter ? "握手后崩溃" : "正常"}</span>
+      ${serverPill(s)}</div>`).join("");
+}
+
+function renderTools() {
+  const tbody = document.querySelector("#tools-table tbody");
+  const rows = [];
+  // 内置
+  for (const n of ["read_file", "write_file", "grep", "glob", "bash", "list_files", "edit_file", "remember"]) {
+    rows.push(`<tr><td class="name">${n}</td><td><span class="pill builtin">内置</span></td><td>…</td><td>…</td></tr>`);
+  }
+  for (const [full, { server, def }] of toolTable) {
+    rows.push(`<tr><td class="name">${full}</td><td><span class="pill mcp">MCP</span> ${server.def.name}</td><td>${def.description}</td><td><span class="t">${Object.keys(def.inputSchema?.properties ?? {}).join(", ") || "—"}</span></td></tr>`);
+  }
+  tbody.innerHTML = rows.join("");
+  const sel = document.getElementById("call-tool");
+  sel.innerHTML = `<option value="">— 选择 MCP 工具 —</option>` +
+    [...toolTable.keys()].map((k) => `<option>${k}</option>`).join("");
+  sel.disabled = toolTable.size === 0;
+  document.getElementById("btn-call").disabled = toolTable.size === 0;
+  document.getElementById("call-args").disabled = toolTable.size === 0;
+}
+
+function renderAll() {
+  renderServers();
+  renderTools();
+  document.getElementById("s-phase").textContent = phase;
+  const ready = servers.filter((s) => s.state === State.READY).length;
+  const failed = servers.filter((s) => s.state === State.FAILED).length;
+  document.getElementById("s-servers").textContent = ready === 0 && failed === 0 ? "—" : `${ready} 个就绪 / ${failed} 个失败`;
+  document.getElementById("s-tools").textContent = `8 个内置 + ${toolTable.size} 个 MCP`;
+  document.getElementById("s-call").textContent = sCall;
+  document.getElementById("s-result").textContent = sResult;
+  document.getElementById("s-failed").textContent = failed > 0 ? servers.filter((s) => s.state === State.FAILED).map((s) => s.def.name).join("、") : "无";
+  const connecting = servers.some((s) => [State.CONNECTING, State.LISTING, State.CLOSING].includes(s.state));
+  document.getElementById("btn-connect").disabled = connecting || servers.some((s) => s.state === State.READY || s.state === State.CONNECTING);
+  document.getElementById("btn-close").disabled = !servers.some((s) => s.state === State.READY);
+}
+
+// ---- 引导走查 ----
+const DECISIONS = [
+  { id: "sdk", title: "① SDK vs 手写客户端", body: `
+    <p class="step"><b>问题：</b>用官方 <code>@modelcontextprotocol/sdk</code>，还是手写一个最小 JSON-RPC 客户端（零依赖）？</p>
+    <div class="scenario">MCP 是活跃演进的协议：JSON-RPC 2.0 分帧（stdio 是换行分隔 JSON，不是 LSP 的 Content-Length）、initialize 握手 + 能力协商、initialized 通知、分块/进度通知、错误码约定。SDK 拥有这些 wire 兼容性；我们只做薄封装（配置 → 连接 → 工具发现 → 调用路由）。手写约 200 行能覆盖 tools-only 的最小集，但协议升级要自己跟。</div>
+    <p><b>推荐：官方 SDK。</b>与现有依赖风格一致（openai / @anthropic-ai/sdk 都是官方 SDK）；协议细节不归我们管；测试用真实 SDK + 真实子进程 fixture 保证可信。</p>
+    <p class="step"><b>代价：</b>+1 运行时依赖（<code>@modelcontextprotocol/sdk</code>）；SDK 内部有 Promise/队列，生命周期要在 finally 里显式关闭。</p>` },
+  { id: "security", title: "② 安全兜底：MCP 工具默认 ask", body: `
+    <p class="step"><b>问题：</b>MCP 工具是黑盒——<code>mcp:shell:execute</code> 可能执行任意命令，simple-agent 无法预知 server 端行为。默认放行还是默认确认？</p>
+    <div class="scenario">内置工具能精确建规则（bash 有 pattern）。MCP 工具做不到——只有名字和描述。所以兜底（未命中任何规则）= <b>ask</b>（非 TTY 自动拒，和现在一样）。信任的 server 用 .rules 开白：<code>{ "tool": "mcp:files:*", "action": "allow" }</code>（复用现有 glob 匹配，<code>*</code> 匹配任意含斜杠）。</div>
+    <p><b>推荐：兜底 ask。</b>安全基线不变：新 server 默认需人类确认，确认过的（.rules）自动放行。</p>
+    <p class="step"><b>注意：</b>ask 分支已接入 PreToolUse hook 链（确认后也走 hook）——MCP 调用完整走 内置 policy → hooks → 执行 → PostToolUse。</p>` },
+  { id: "failure", title: "③ 失败语义：跳过 vs 退出", body: `
+    <p class="step"><b>问题：</b>一个 server 连不上（命令不存在、握手超时、进程崩溃），整个会话怎么办？</p>
+    <div class="scenario">试上面的「连接全部」：slow 握手超时 → failed，crash 就绪后崩溃 → failed。其余 server 照常 ready，工具照常可用。配置文件损坏（JSON 语法错）才大声失败退出——那是配置错误，不是运行时故障。</div>
+    <p><b>推荐：连接失败 → stderr 警告 + 跳过该 server，会话继续。</b>运行时调用失败（崩溃/超时/isError）→ 错误工具结果喂给模型，loop 不中断。一个坏 server 不该瘫痪整个 agent。</p>
+    <p class="step"><b>边界：</b>「跳过」也要可见——<code>--verbose</code> 打印 <code>[mcp=2 servers, 5 tools, 1 failed]</code>；崩溃后工具从模型可见集消失，模型不会再调用（Unknown tool 提示会引导它）。</p>` },
+  { id: "naming", title: "④ 工具命名 mcp:server:tool", body: `
+    <p class="step"><b>问题：</b>两个 server 都可能提供 <code>read</code>；也可能和内置工具重名。模型看到的工具名怎么定？</p>
+    <div class="scenario">命名 <code>mcp:&lt;server&gt;:&lt;tool&gt;</code>（如 <code>mcp:files:read</code>）。作用：① 永不冲突（内置工具无 mcp: 前缀）；② policy/hook matcher 拿到精确句柄——<code>mcp:files:*</code> 精确匹配一个 server 的全部工具；③ 模型从名字就知道来源。描述前缀 <code>[MCP 服务器 "files"]</code> 再补一句。</div>
+    <p><b>推荐：<code>mcp:server:tool</code>。</b>看上面的工具合并表——内置和 MCP 一目了然。</p>` },
+  { id: "config", title: "⑤ 配置 .mcp.json", body: `
+    <p class="step"><b>问题：</b>服务器声明放哪、什么格式？</p>
+    <div class="scenario">工作区 <code>.mcp.json</code>，对齐 Claude Desktop 格式（生态通用）：</div>
+    <pre class="code">{
+  "mcpServers": {
+    "files":  { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."], "env": { "FOO": "1" } },
+    "remote": { "url": "https://mcp.example.com/mcp" }
+  }
+}</pre>
+    <p>缺失 → 无 MCP 工具（静默）；JSON 损坏 → 大声失败（和 .rules/.hooks 一致：配置错误不能悄悄失效）。server 条目校验：<code>command</code>（stdio）或 <code>url</code>（http）二选一必填。</p>
+    <p><b>推荐：.mcp.json + Claude Desktop 格式。</b>生态里现成配置可直接粘贴。</p>` },
+  { id: "transport", title: "⑥ 传输：stdio + HTTP", body: `
+    <p class="step"><b>问题：</b>v1 支持哪些传输？</p>
+    <div class="scenario">本地 server 走 <b>stdio</b>（spawn 子进程，newline JSON 双向流）——npx 一行起一个 server，是 MCP 最常见的用法。远程 server 走 <b>streamable HTTP</b>（现代规范，取代旧 SSE）——SDK 的 StreamableHTTPClientTransport 直接可用。SDK 两个 transport 一起带上，代码里只有配置分支（command vs url）。</div>
+    <p><b>推荐：stdio + HTTP 都支持。</b>成本几乎为零（SDK 内置），覆盖本地与远程两种真实场景。</p>
+    <p class="step"><b>边界：</b>OAuth / 远程鉴权不做（v1）；需要 token 的服务后续版本加 env/config 传参。</p>` },
+];
+
+function renderWalkthrough() {
+  const tabs = document.getElementById("tabs");
+  const body = document.getElementById("walkthrough");
+  tabs.innerHTML = DECISIONS.map((d, i) => `<button data-i="${i}">${d.title}</button>`).join("");
+  const show = (i) => {
+    [...tabs.children].forEach((b, j) => b.classList.toggle("active", j === i));
+    body.innerHTML = DECISIONS[i].body;
+  };
+  tabs.addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b) show(Number(b.dataset.i));
+  });
+  show(0);
+}
+
+// ---- 事件绑定 ----
+document.getElementById("btn-connect").addEventListener("click", connectAll);
+document.getElementById("btn-close").addEventListener("click", closeAll);
+document.getElementById("btn-call").addEventListener("click", () => {
+  const full = document.getElementById("call-tool").value;
+  if (!full) return;
+  let args = {};
+  try { args = JSON.parse(document.getElementById("call-args").value || "{}"); }
+  catch { setCallout("参数不是合法 JSON", "err"); return; }
+  sCall = full;
+  callTool(full, args);
+});
+
+renderWalkthrough();
+renderAll();
+log("就绪。点「连接全部」开始——注意每个 server 独立推进状态，slow 会超时失败、crash 会在就绪后崩溃，其余不受影响。", "meta");
+</script>
+</body>
+</html>
