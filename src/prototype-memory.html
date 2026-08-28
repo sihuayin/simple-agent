@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型：会话与记忆（user / project / feedback + 生命周期）</title>
+<style>
+  :root {
+    --accent: #7c3aed; --accent-soft: #f5f3ff; --accent-border: #ddd6fe;
+    --ink: #1e293b; --muted: #64748b; --border: #e2e8f0;
+    --ok: #059669; --err: #dc2626; --warn: #b45309; --blue: #2563eb;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); margin: 0; background: #f8fafc; line-height: 1.6; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 90px; }
+  header h1 { font-size: 22px; margin: 0 0 6px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 999px; padding: 2px 10px; margin-bottom: 10px; }
+  .question { background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; font-size: 13.5px; margin: 10px 0 20px; }
+  section { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 12px; font-size: 12px; font-weight: 700; }
+  .pill.user { background: #eff6ff; color: var(--blue); border: 1px solid #bfdbfe; }
+  .pill.project { background: #ecfdf5; color: var(--ok); border: 1px solid #bbf7d0; }
+  .pill.feedback { background: #fffbeb; color: var(--warn); border: 1px solid #fde68a; }
+  .pill.proposal { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .kv { display: grid; grid-template-columns: 150px 1fr; gap: 3px 12px; font-size: 13.5px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-weight: 500; font-family: var(--mono); font-size: 12.5px; }
+  .callout { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .callout.ok { background: #ecfdf5; color: var(--ok); border-color: #bbf7d0; }
+  .callout.warn { background: #fffbeb; color: var(--warn); border-color: #fde68a; }
+  .callout.err { background: #fef2f2; color: var(--err); border-color: #fecaca; }
+  .trace { font-family: var(--mono); font-size: 12px; background: #0f172a; color: #cbd5e1; border-radius: 8px; padding: 12px; max-height: 240px; overflow-y: auto; white-space: pre-wrap; }
+  .trace .hit { color: #fbbf24; } .trace .miss { color: #64748b; } .trace .pass { color: #93c5fd; font-weight: 700; } .trace .sup { color: #fca5a5; font-weight: 700; }
+  .mem { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .mem .t { flex: 1; } .mem .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .mem.suppressed { opacity: .55; text-decoration: line-through; }
+  .mem .del { cursor: pointer; color: var(--err); font-size: 12px; border: 0; background: none; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .buttons button { font-size: 13px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--border); background: #fff; color: var(--ink); cursor: pointer; }
+  .buttons button:hover { border-color: var(--accent); color: var(--accent); }
+  .buttons button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .buttons button.warn { background: #fffbeb; color: var(--warn); border-color: #fde68a; }
+  .buttons button.danger { background: #fef2f2; color: var(--err); border-color: #fecaca; }
+  .buttons button:disabled { opacity: .4; cursor: default; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tabs button { font-size: 12.5px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .step { font-size: 13px; margin: 6px 0 4px; color: var(--muted); }
+  .step b { color: var(--ink); }
+  .scenario { font-size: 13px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 8px 0 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="badge">原型 · LOGIC</span>
+  <h1>会话与记忆：什么该记、怎么加载、冲突时谁赢</h1>
+  <div class="question">
+    <b>要回答的问题：</b>记忆分三类（user 个人偏好 / project 项目约定 / feedback 行为纠正），判断标准是"下次新会话还有用吗"。这套模型在真实使用中是否成立？
+    重点推演：① 新会话在不同项目启动时，哪些记忆被加载、哪些被过滤；② 同主题记忆冲突（用户偏好 vs 项目约定）时谁赢；③ 同一主题反复纠正时怎么覆盖；④ 噪音（临时调试信息）怎么拦在门外。
+    <br>底部有 4 个引导走查，也可以随意点上面的按钮自由探索。
+  </div>
+</header>
+
+<section>
+  <h2>当前状态</h2>
+  <div class="kv">
+    <dt>当前会话所在项目</dt><dd id="s-project">—</dd>
+    <dt>已注入会话的记忆</dt><dd id="s-injected">—</dd>
+    <dt>被压制的冲突记忆</dt><dd id="s-suppressed">—</dd>
+    <dt>本轮过滤掉（不属于此项目）</dt><dd id="s-dropped">—</dd>
+    <dt>最近一次记忆操作</dt><dd id="s-proposal">—</dd>
+  </div>
+  <div id="callout" class="callout" style="display:none"></div>
+</section>
+
+<section>
+  <h2>记忆库（全部，含版本历史）</h2>
+  <div id="library"></div>
+  <div class="buttons" style="margin-top:10px">
+    <button onclick="act('reset')">重置（清空记忆库）</button>
+  </div>
+</section>
+
+<section>
+  <h2>自由探索</h2>
+  <div class="buttons">
+    <button onclick="act('session','A')">新会话：在项目 A 开始</button>
+    <button onclick="act('session','B')">新会话：在项目 B 开始</button>
+    <button class="primary" onclick="act('remember-user-lang')">记住：用户偏好「回复用中文」</button>
+    <button onclick="act('remember-user-name')">记住：用户偏好「变量名用 camelCase」</button>
+    <button onclick="act('remember-user-short')">记住：用户偏好「回答简洁一点」</button>
+    <button onclick="act('remember-proj-func')">记住：项目 A 约定「不要用 class，统一函数式」</button>
+    <button onclick="act('remember-proj-name')">记住：项目 A 约定「变量名用 camelCase」</button>
+    <button onclick="act('remember-proj-deploy')">记住：项目 A 约定「部署时先跑 migrate」</button>
+    <button onclick="act('remember-fb-deploy')">记住：反馈纠正「部署时要先跑 migrate，不能直接 push」</button>
+    <button onclick="act('remember-noise')">记住：临时调试信息「这个 bug 的堆栈是……」（噪音）</button>
+  </div>
+  <p class="step" style="margin-top:10px"><b>提示：</b>点击即自动落库（无确认环节）；噪音（临时信息）会被自动拒绝，理由见上方状态。</p>
+</section>
+
+<section>
+  <h2>引导走查</h2>
+  <div class="tabs" id="tabs"></div>
+  <div id="scenario"></div>
+  <div class="buttons" id="steps"></div>
+  <div id="stepnote" class="step"></div>
+</section>
+
+<section>
+  <h2>操作日志</h2>
+  <div class="trace" id="trace"></div>
+</section>
+</div>
+
+<script id="logic">
+/* ===================== 纯逻辑模块（可原样提进真实代码） ===================== */
+const MemoryLogic = (() => {
+  // 主题键：同主题 + 同类型 → 覆盖；同主题跨类型 → 冲突裁定
+  const TOPICS = { language: "回复语言", naming: "命名风格", style: "代码范式", deploy: "部署流程", verbosity: "回答长度", noise: "临时信息" };
+
+  // Memory = { id, type: "user"|"project"|"feedback", topic, text, sourceProject,
+  //            scope: "global" | projectId, createdAt, updatedAt, version }
+  // 规则：user 必为 global；project/feedback 必为所在项目 scope（切项目即被过滤）
+
+  const empty = () => ({ memories: [], lastAction: null, currentProject: null, seq: 0 });
+
+  const id = (s) => `m${++s.seq}`;
+
+  // ---- 自动记住：直接落库（无确认环节）；不值得记的自动拒绝 ----
+  // 判断标准（用户的）：下次新会话还有用吗？噪音类、无主题的一律拒绝落库。
+  function remember(s, { type, topic, text, sourceProject, global }) {
+    const worth = topic !== "noise" && !!text.trim();
+    if (!worth) {
+      s.lastAction = { kind: "rejected", reason: "临时信息：下次会话已无用，自动拒绝落库" };
+      return { ...s };
+    }
+    const scope = global ? "global" : sourceProject;
+    // 同 topic + 同 type + 同 scope → 覆盖（version+1，保留历史）；否则新增。
+    const idx = s.memories.findIndex((m) => m.topic === topic && m.type === type && m.scope === scope);
+    const now = Date.now();
+    if (idx >= 0) {
+      const prev = s.memories[idx];
+      s.memories[idx] = { ...prev, text, updatedAt: now, version: prev.version + 1, history: [...(prev.history ?? []), { text: prev.text, updatedAt: prev.updatedAt }] };
+      s.lastAction = { kind: "updated", id: s.memories[idx].id };
+      return { ...s };
+    }
+    const mem = { id: id(s), type, topic, text, scope, sourceProject, createdAt: now, updatedAt: now, version: 1, history: [] };
+    s.memories.push(mem);
+    s.lastAction = { kind: "added", id: mem.id };
+    return { ...s };
+  }
+
+  function forget(s, memId) { s.memories = s.memories.filter((m) => m.id !== memId); return { ...s }; }
+
+  // ---- 加载：新会话注入 ----
+  // user(global) 总是注入；project/feedback 仅当 scope === 当前项目。
+  // 冲突裁定：同 topic 多条 → 项目级（project/feedback）恒压 global(user)；
+  //   同为项目级 → updatedAt 新者赢；被压制的进 suppressed（可见，不丢）。
+  function loadForSession(s, projectId) {
+    s.currentProject = projectId;
+    const eligible = s.memories.filter((m) => m.scope === "global" || m.scope === projectId);
+    const dropped = s.memories.filter((m) => !(m.scope === "global" || m.scope === projectId));
+    // 按 topic 分组裁定
+    const groups = {};
+    for (const m of eligible) (groups[m.topic] ??= []).push(m);
+    const injected = [];
+    const suppressed = [];
+    for (const g of Object.values(groups)) {
+      const projectLevel = g.filter((m) => m.type !== "user");
+      const userLevel = g.filter((m) => m.type === "user");
+      if (projectLevel.length === 0) { injected.push(...userLevel); continue; }
+      const winner = projectLevel.slice().sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      injected.push(winner);
+      for (const m of g) if (m !== winner) suppressed.push({ mem: m, reason: m.type === "user" ? "用户偏好被项目约定压制" : "同主题下更新的纠正生效" });
+    }
+    return { ...s, injected: injected.map((m) => m.id), suppressed, dropped };
+  }
+
+  // ---- 语义检查：记忆的"值得记"判定（给 UI 用） ----
+  function worthJudgement(type, global) {
+    return global ? "全局偏好：跨项目生效" : "项目级：仅在来源项目生效";
+  }
+
+  return { empty, remember, forget, loadForSession, worthJudgement, TOPICS };
+})();
+/* ===================== 页面壳（纯展示，不掺逻辑） ===================== */
+
+let state = MemoryLogic.empty();
+const log = [];
+
+function act(name, arg) {
+  const before = JSON.stringify(state);
+  switch (name) {
+    case "reset": state = MemoryLogic.empty(); log.length = 0; break;
+    case "session": state = MemoryLogic.loadForSession(state, arg); push("新会话在项目 " + arg + " 启动", "session"); break;
+    case "remember-user-lang": state = MemoryLogic.remember(state, { type: "user", topic: "language", text: "回复用中文", sourceProject: "A", global: true }); push("记住：用户偏好「回复用中文」", "propose"); break;
+    case "remember-user-name": state = MemoryLogic.remember(state, { type: "user", topic: "naming", text: "变量名用 camelCase", sourceProject: "A", global: true }); push("记住：用户偏好「变量名用 camelCase」", "propose"); break;
+    case "remember-user-short": state = MemoryLogic.remember(state, { type: "user", topic: "verbosity", text: "回答简洁一点", sourceProject: "A", global: true }); push("记住：用户偏好「回答简洁一点」", "propose"); break;
+    case "remember-proj-func": state = MemoryLogic.remember(state, { type: "project", topic: "style", text: "不要用 class，统一函数式", sourceProject: "A", global: false }); push("记住：项目 A 约定「不要用 class，统一函数式」", "propose"); break;
+    case "remember-proj-name": state = MemoryLogic.remember(state, { type: "project", topic: "naming", text: "变量名用 camelCase", sourceProject: "A", global: false }); push("记住：项目 A 约定「变量名用 camelCase」", "propose"); break;
+    case "remember-proj-deploy": state = MemoryLogic.remember(state, { type: "project", topic: "deploy", text: "部署时先跑 migrate", sourceProject: "A", global: false }); push("记住：项目 A 约定「部署时先跑 migrate」", "propose"); break;
+    case "remember-fb-deploy": state = MemoryLogic.remember(state, { type: "feedback", topic: "deploy", text: "部署时要先跑 migrate，不能直接 push", sourceProject: "A", global: false }); push("记住：反馈纠正「部署时要先跑 migrate，不能直接 push」", "propose"); break;
+    case "remember-noise": state = MemoryLogic.remember(state, { type: "project", topic: "noise", text: "这个 bug 的堆栈是……", sourceProject: "A", global: false }); push("尝试记住：临时调试信息（噪音）", "propose"); break;
+    case "forget": state = MemoryLogic.forget(state, arg); push("忘记（删除）记忆 " + arg, "forget"); break;
+  }
+  render();
+  (before !== JSON.stringify(state)) && scrollLog();
+}
+
+function push(text, kind) {
+  log.push({ text, kind, at: new Date().toLocaleTimeString() });
+}
+
+function scrollLog() { const t = document.getElementById("trace"); t.scrollTop = t.scrollHeight; }
+
+/* ---------- 渲染 ---------- */
+const T = MemoryLogic.TOPICS;
+const TYPE_CN = { user: "用户偏好", project: "项目约定", feedback: "反馈纠正" };
+
+function memText(m) {
+  return `${m.text} <span class="meta">[${TYPE_CN[m.type]} · ${T[m.topic]} · ${m.scope === "global" ? "全局" : "项目 " + m.scope} · v${m.version}${m.history?.length ? " · 有历史" : ""}]</span>`;
+}
+
+function render() {
+  document.getElementById("s-project").textContent = state.currentProject ?? "—";
+  const inj = state.injected ?? [];
+  document.getElementById("s-injected").textContent = inj.length ? inj.map((id2) => state.memories.find((m) => m.id === id2)?.text).join("；") : "（无）";
+  document.getElementById("s-suppressed").textContent = (state.suppressed ?? []).length ? (state.suppressed ?? []).map((x) => `${x.mem.text}（${x.reason}）`).join("；") : "（无）";
+  document.getElementById("s-dropped").textContent = state.dropped?.length ? state.dropped.map((m) => m.text).join("；") : "（无）";
+
+  document.getElementById("s-proposal").textContent = state.lastAction
+    ? (state.lastAction.kind === "rejected" ? "被自动拒绝：" + state.lastAction.reason : "自动落库（见下方说明）")
+    : "（无）";
+
+  // 最近一次记忆操作
+  const la = state.lastAction;
+  const co = document.getElementById("callout");
+  if (la) {
+    co.style.display = "block";
+    if (la.kind === "rejected") {
+      co.className = "callout err";
+      co.innerHTML = `自动拒绝：${la.reason}`;
+    } else {
+      const m = state.memories.find((x) => x.id === la.id);
+      co.className = "callout " + (la.kind === "updated" ? "warn" : "ok");
+      co.innerHTML = `${la.kind === "added" ? "已记住" : "已覆盖"}：<b>${m ? TYPE_CN[m.type] : ""}</b>「${m?.text ?? ""}」→ ${MemoryLogic.worthJudgement(m?.type, m?.scope === "global")}${la.kind === "updated" ? `（v${m?.version}，旧文本进历史）` : ""}`;
+    }
+  } else {
+    co.style.display = "none";
+  }
+
+  // 记忆库
+  const lib = document.getElementById("library");
+  lib.innerHTML = "";
+  if (!state.memories.length) { lib.innerHTML = '<div class="step">（空——还没有任何记忆）</div>'; }
+  for (const m of [...state.memories].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    const div = document.createElement("div");
+    div.className = "mem" + ((state.suppressed ?? []).some((x) => x.mem.id === m.id) ? " suppressed" : "");
+    div.innerHTML = `<span class="pill ${m.type}">${TYPE_CN[m.type]}</span><span class="t">${memText(m)}</span>`;
+    const del = document.createElement("button");
+    del.className = "del"; del.textContent = "忘记";
+    del.onclick = () => act("forget", m.id);
+    div.appendChild(del);
+    lib.appendChild(div);
+  }
+
+  // 走查
+  renderWalkthroughs();
+  // 日志
+  const t = document.getElementById("trace");
+  t.innerHTML = log.map((l) => `<div>${l.at} <span class="${l.kind === "propose" ? "hit" : l.kind === "confirm" ? "pass" : l.kind === "reject" ? "miss" : ""}">${l.text}</span></div>`).join("") || "<div class='miss'>（空）</div>";
+}
+
+/* ---------- 走查 ---------- */
+const SCENARIOS = [
+  {
+    name: "① 幸福路径",
+    desc: "在新项目 A 里开始会话：个人偏好（全局）和项目约定（项目级）都应该自动注入，agent 不需要重新问一遍。",
+    steps: [
+      { label: "新会话：项目 A", act: () => act("session", "A"), note: "看『当前状态』：全局偏好和项目 A 的约定都注入了（目前还没有记忆，先记住两条）。" },
+      { label: "记住项目 A 约定「部署时先跑 migrate」", act: () => act("remember-proj-deploy"), note: "自动落库为项目级记忆，只有项目 A 的会话能看见。" },
+      { label: "再次新会话：项目 A", act: () => act("session", "A"), note: "新会话自动加载了全部记忆——「接着上次聊」变成「接着上次的约定聊」。" },
+    ],
+  },
+  {
+    name: "② 切项目过滤",
+    desc: "切到项目 B：user 偏好（全局）应该保留，项目 A 的约定和纠正必须被过滤掉——B 项目不该被 A 的约定污染。",
+    steps: [
+      { label: "新会话：项目 A（先准备好记忆）", act: () => act("session", "A"), note: "" },
+      { label: "记住用户偏好「回复用中文」", act: () => act("remember-user-lang"), note: "全局偏好，跨项目生效。" },
+      { label: "记住项目 A 约定「不要用 class」", act: () => act("remember-proj-func"), note: "项目级。" },
+      { label: "新会话：项目 B", act: () => act("session", "B"), note: "看『当前状态』：回复用中文还在（user 全局），「不要用 class」被过滤（project 仅项目 A）。这正是按类型过滤的意义。" },
+    ],
+  },
+  {
+    name: "③ 冲突裁定",
+    desc: "用户偏好说 snake_case，项目约定说 camelCase——同主题冲突。谁赢？模型裁定：项目级约定恒压个人偏好（用户在这个项目里已经把偏好让渡给了项目约定）。",
+    steps: [
+      { label: "新会话：项目 A", act: () => act("session", "A"), note: "" },
+      { label: "记住用户偏好「变量名用 camelCase」", act: () => act("remember-user-name"), note: "全局 user 记忆。" },
+      { label: "记住项目 A 约定「变量名用 camelCase」", act: () => act("remember-proj-name"), note: "落库后两条记忆 topic 相同、类型不同——注意：跨类型不互相覆盖。" },
+      { label: "再次新会话：项目 A", act: () => act("session", "A"), note: "看『被压制的冲突记忆』：user 版被项目约定压制（可见但划掉），注入的是项目版。裁定规则：项目级 > 全局；同级别内更新的赢。" },
+    ],
+  },
+  {
+    name: "④ 覆盖与噪音",
+    desc: "同一主题反复纠正 → 覆盖升级（版本+1），不是堆积；临时调试信息 → 自动判定「下次会话没用了」→ 自动拒绝，不落库。",
+    steps: [
+      { label: "新会话：项目 A", act: () => act("session", "A"), note: "" },
+      { label: "记住项目 A 约定「部署时先跑 migrate」", act: () => act("remember-proj-deploy"), note: "v1。" },
+      { label: "记住反馈纠正「部署时要先跑 migrate，不能直接 push」", act: () => act("remember-fb-deploy"), note: "同 topic(deploy) 跨类型：不覆盖，但项目级内按时间新者赢——上一条在注入时被压制。" },
+      { label: "再记住反馈纠正「先跑 migrate 再跑测试，然后才能部署」", act: () => act("remember-fb-deploy"), note: "同 topic + 同类型 → 覆盖：v1→v2，旧文本进历史，记忆库不堆积。" },
+      { label: "尝试记住临时调试信息", act: () => act("remember-noise"), note: "自动拒绝：『当前状态』显示理由——临时信息下次会话已无用。这就是"什么该记"的执行。" },
+    ],
+  },
+];
+
+let currentTab = 0;
+function renderWalkthroughs() {
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = "";
+  SCENARIOS.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.textContent = s.name; b.className = i === currentTab ? "active" : "";
+    b.onclick = () => { currentTab = i; render(); };
+    tabs.appendChild(b);
+  });
+  const s = SCENARIOS[currentTab];
+  document.getElementById("scenario").innerHTML = `<div class="scenario"><b>${s.name}：</b>${s.desc}</div>`;
+  const box = document.getElementById("steps");
+  box.innerHTML = "";
+  s.steps.forEach((st, i) => {
+    const b = document.createElement("button");
+    b.textContent = `${i + 1}. ${st.label}`;
+    b.onclick = () => { st.act(); document.getElementById("stepnote").innerHTML = `第 ${i + 1} 步 · ${st.note}`; };
+    box.appendChild(b);
+  });
+  document.getElementById("stepnote").textContent = "";
+}
+
+render();
+</script>
+</body>
+</html>
