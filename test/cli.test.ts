@@ -45,6 +45,12 @@ describe("parseArgs", () => {
     expect(parseArgs([]).noStream).toBe(false);
   });
 
+  it("parses --memory and --memory-forget", () => {
+    expect(parseArgs(["--memory"]).memory).toBe(true);
+    expect(parseArgs(["--memory-forget", "g1"]).memoryForget).toBe("g1");
+    expect(() => parseArgs(["--memory-forget"])).toThrow(CliUsageError);
+  });
+
   it("help mentions --no-stream", () => {
     expect(helpText()).toContain("--no-stream");
   });

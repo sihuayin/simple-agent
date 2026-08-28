@@ -15,6 +15,37 @@ import {
 } from "./cli.js";
 import { toolSpecs } from "./tools/registry.js";
 import { Spinner } from "./spinner.js";
+import { forget, loadForSession, loadMemoryStore, saveMemoryStore } from "./agent/memory.js";
+
+const TYPE_CN = { user: "用户偏好", project: "项目约定", feedback: "反馈纠正" } as const;
+
+async function memoryCommand(workspace: string, forgetId?: string): Promise<boolean> {
+  if (forgetId) {
+    const store = await loadMemoryStore(workspace);
+    const target = store.memories.find((m) => m.id === forgetId);
+    if (!target) {
+      process.stderr.write(`未找到记忆 id：${forgetId}\n`);
+      return false;
+    }
+    await saveMemoryStore(forget(store, forgetId), workspace);
+    process.stdout.write(`已忘记：${target.text}\n`);
+    return true;
+  }
+  const store = await loadMemoryStore(workspace);
+  const { injected, dropped } = loadForSession(store, workspace);
+  if (store.memories.length === 0) {
+    process.stdout.write("（没有记忆——agent 会在会话中通过 remember 工具自动积累）\n");
+    return true;
+  }
+  for (const m of store.memories) {
+    const where = m.scope === "global" ? "全局" : "本项目";
+    process.stdout.write(`${m.id}\t[${TYPE_CN[m.type]}] ${m.text}（${where}，v${m.version}）\n`);
+  }
+  const notLoaded = dropped.map((m) => m.text).join("；");
+  if (notLoaded) process.stderr.write(`本次会话不会加载（其他项目的记忆）：${notLoaded}\n`);
+  if (injected.length === 0 && store.memories.length > 0) process.stderr.write("（本项目的记忆将在下次会话自动注入系统提示词）\n");
+  return true;
+}
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -25,6 +56,10 @@ async function main(): Promise<void> {
   }
   if (args.version) {
     process.stdout.write(`${versionText()}\n`);
+    return;
+  }
+  if (args.memory || args.memoryForget) {
+    process.exitCode = (await memoryCommand(process.cwd(), args.memoryForget)) ? 0 : 1;
     return;
   }
 
@@ -46,15 +81,23 @@ async function main(): Promise<void> {
   // Streaming by default: live text + a spinner while waiting.
   // --no-stream restores one-shot behavior (final answer printed once).
   const spinner = new Spinner("工作中…");
+  // 记忆：历史会话注入本次提示词；本次会话记住的，下次生效
+  const workspace = process.cwd();
+  const memoryStore = await loadMemoryStore(workspace);
+  const { injected } = loadForSession(memoryStore, workspace);
+  if (args.verbose && injected.length > 0) {
+    process.stderr.write(`[memory=${injected.length} loaded]\n`);
+  }
+
   spinner.start();
   const result = await runAgent({
     adapter,
     model,
-    systemPrompt: await buildSystemPrompt(process.cwd()),
+    systemPrompt: await buildSystemPrompt(workspace, injected),
     userPrompt: cleanPrompt,
     forceCompact,
     tools: toolSpecs(),
-    toolContext: { workspace: process.cwd(), cwd: process.cwd(), env: process.env },
+    toolContext: { workspace, cwd: workspace, env: process.env },
     onText: args.noStream ? undefined : (t) => process.stdout.write(t),
     onPhase: (phase) => {
       if (phase === "waiting") spinner.start();

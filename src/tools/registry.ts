@@ -4,6 +4,7 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { listFilesTool } from "./list_files.js";
 import { readFileTool } from "./read_file.js";
+import { rememberTool } from "./remember.js";
 import type { ToolEntry } from "./types.js";
 import { writeFileTool } from "./write_file.js";
 
@@ -16,6 +17,7 @@ export const TOOLS: Record<string, ToolEntry> = {
   glob: globTool,
   bash: bashTool,
   list_files: listFilesTool,
+  remember: rememberTool,
 };
 
 /** Tool specs (name/description/parameters) to advertise to the model. */

@@ -12,6 +12,8 @@ export interface CliArgs {
   noStream: boolean;
   help: boolean;
   version: boolean;
+  memory: boolean;
+  memoryForget: string | undefined;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -23,6 +25,8 @@ export function parseArgs(argv: string[]): CliArgs {
     noStream: false,
     help: false,
     version: false,
+    memory: false,
+    memoryForget: undefined,
   };
   const positionals: string[] = [];
 
@@ -32,6 +36,12 @@ export function parseArgs(argv: string[]): CliArgs {
     else if (arg === "--version") args.version = true;
     else if (arg === "--verbose") args.verbose = true;
     else if (arg === "--no-stream") args.noStream = true;
+    else if (arg === "--memory") args.memory = true;
+    else if (arg === "--memory-forget") {
+      const value = argv[++i];
+      if (!value) throw new CliUsageError("--memory-forget requires a memory id");
+      args.memoryForget = value;
+    }
     else if (arg === "--provider") {
       const value = argv[++i];
       if (!value) throw new CliUsageError("--provider requires a value");
@@ -101,6 +111,8 @@ Options:
   --model <name>   Model (default: $<PROVIDER>_MODEL or the provider's default, e.g. ${PROVIDERS.deepseek.defaultModel})
   --verbose        Print model, iterations, and tool-call count to stderr
   --no-stream      Print the final answer once (disable live streaming output)
+  --memory         List stored memories (global + this project) and exit
+  --memory-forget <id>  Forget one memory by id and exit
   -h, --help       Show this help
   --version        Print the version
 

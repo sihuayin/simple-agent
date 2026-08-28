@@ -58,6 +58,8 @@ const ALLOW_RULES: PolicyRule[] = [
   { tool: "grep", action: "allow" },
   { tool: "glob", action: "allow" },
   { tool: "list_files", action: "allow" },
+  // remember 只写记忆文件（~/.simple-agent/ 与工作区 .simple-agent/），不碰项目源码——自动落库无需确认
+  { tool: "remember", action: "allow" },
 ];
 
 export const DEFAULT_RULES: PolicyRule[] = [...DENY_RULES, ...ASK_RULES, ...ALLOW_RULES];

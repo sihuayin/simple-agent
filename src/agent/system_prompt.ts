@@ -1,6 +1,8 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import type { Memory } from "./memory.js";
+
 const PROJECT_SETTINGS_CAP = 20000;
 
 /** 第一层：角色定义。最稳定，位于最上层，优先命中缓存前缀。 */
@@ -32,14 +34,34 @@ async function loadProjectLayer(workspace: string): Promise<string | null> {
   return `项目基础设定与开发约束（来自项目 AGENTS.md），开发时遵守：\n${content}`;
 }
 
+/** 记忆层：从历史会话注入的记忆（user 全局 + 当前项目级）。 */
+export function buildMemorySection(injected: Memory[]): string | null {
+  if (injected.length === 0) return null;
+  const labels: Record<Memory["type"], string> = {
+    user: "用户偏好（全局）",
+    project: "项目约定",
+    feedback: "反馈纠正（历史会话中的修正）",
+  };
+  const lines = injected
+    .map((m) => `- [${labels[m.type]}] ${m.text}`)
+    .join("\n");
+  return `记忆（来自历史会话，自动加载，请遵守）：\n${lines}`;
+}
+
 /**
  * 分层系统提示词。稳定内容在前：两家提供方的提示缓存都是前缀匹配
  * （DeepSeek 自动 KV 缓存；Anthropic cache_control 断点），因此
  * 角色 → 规则 → 项目设定的稳定前缀会在多次请求间被复用。见 ADR-0001。
+ * 记忆层排在项目设定之后（变化频率高于前缀，且越晚越不容易失效）。
  */
-export async function buildSystemPrompt(workspace: string): Promise<string> {
+export async function buildSystemPrompt(
+  workspace: string,
+  injectedMemories: Memory[] = [],
+): Promise<string> {
   const layers = [LAYER_ROLE, LAYER_RULES];
   const project = await loadProjectLayer(workspace);
   if (project) layers.push(project);
+  const memory = buildMemorySection(injectedMemories);
+  if (memory) layers.push(memory);
   return layers.join("\n\n");
 }
