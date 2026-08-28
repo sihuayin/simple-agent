@@ -174,3 +174,31 @@ describe("isValidRule", () => {
     expect(isValidRule(null)).toBe(false);
   });
 });
+
+describe("tool glob matching (MCP)", () => {
+  it("tool field matches as glob: mcp_files_* allows that server's tools", () => {
+    const rules = [{ tool: "mcp_files_*", action: "allow" as const }];
+    expect(evaluatePolicy({ tool: "mcp_files_read" }, rules, []).action).toBe("allow");
+    expect(evaluatePolicy({ tool: "mcp_files_write" }, rules, []).action).toBe("allow");
+    expect(evaluatePolicy({ tool: "mcp_shell_execute" }, rules, []).action).toBe("ask"); // 其他 server 不匹配
+  });
+
+  it("mcp_* matches every MCP tool (deny works across servers)", () => {
+    const rules = [{ tool: "mcp_*", action: "deny" as const }];
+    expect(evaluatePolicy({ tool: "mcp_shell_execute" }, rules, []).action).toBe("deny");
+    expect(evaluatePolicy({ tool: "mcp_files_read" }, rules, []).action).toBe("deny");
+    expect(evaluatePolicy({ tool: "bash" }, rules, []).action).toBe("ask"); // 内置不受 mcp_* 影响
+  });
+
+  it("literal tool names still match exactly (no accidental wildcards)", () => {
+    const rules = [{ tool: "bash", action: "allow" as const }, { tool: "read_file", action: "deny" as const }];
+    expect(evaluatePolicy({ tool: "bash" }, rules, []).action).toBe("allow");
+    expect(evaluatePolicy({ tool: "read_file" }, rules, []).action).toBe("deny");
+    expect(evaluatePolicy({ tool: "bashful" }, rules, []).action).toBe("ask"); // 精确匹配，不模糊
+  });
+
+  it("fallback is ask for an unlisted MCP tool", () => {
+    expect(evaluatePolicy({ tool: "mcp_shell_execute" }, [...DEFAULT_RULES], []).fallback).toBe(true);
+    expect(evaluatePolicy({ tool: "mcp_shell_execute" }, [...DEFAULT_RULES], []).action).toBe("ask");
+  });
+});

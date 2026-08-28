@@ -16,6 +16,8 @@ import {
 import { toolSpecs } from "./tools/registry.js";
 import { Spinner } from "./spinner.js";
 import { forget, loadForSession, loadMemoryStore, saveMemoryStore } from "./agent/memory.js";
+import { loadMcpConfig } from "./mcp/config.js";
+import { McpManager } from "./mcp/client.js";
 
 const TYPE_CN = { user: "用户偏好", project: "项目约定", feedback: "反馈纠正" } as const;
 
@@ -89,34 +91,50 @@ async function main(): Promise<void> {
     process.stderr.write(`[memory=${injected.length} loaded]\n`);
   }
 
-  spinner.start();
-  const result = await runAgent({
-    adapter,
-    model,
-    systemPrompt: await buildSystemPrompt(workspace, injected),
-    userPrompt: cleanPrompt,
-    forceCompact,
-    tools: toolSpecs(),
-    toolContext: { workspace, cwd: workspace, env: process.env },
-    onText: args.noStream ? undefined : (t) => process.stdout.write(t),
-    onPhase: (phase) => {
-      if (phase === "waiting") spinner.start();
-      else if (phase === "streaming" || phase === "done") spinner.stop();
-    },
-  });
-  spinner.stop();
-  if (args.noStream) {
-    process.stdout.write(`${result.text}\n`);
-  } else {
-    process.stdout.write("\n"); // 流式文本末尾补换行
+  // MCP：.mcp.json 声明外部工具服务器；连接失败只跳过该服务器（stderr 警告），会话继续
+  const mcp = new McpManager(await loadMcpConfig(workspace));
+  const { connected, failed: mcpFailed } = await mcp.connectAll();
+  const mcpTools = mcp.getToolEntries();
+  for (const f of mcpFailed) {
+    process.stderr.write(`[mcp] 服务器 "${f.name}" 连接失败，已跳过：${f.error}\n`);
   }
-  if (result.aborted) {
-    process.stderr.write("Aborted: the model kept requesting tools past the iteration cap.\n");
-    process.exitCode = 1;
-  } else if (args.verbose) {
-    process.stderr.write(
-      `[provider=${provider} model=${result.model} iterations=${result.iterations} toolCalls=${result.toolCallsMade} compacted=${result.compactions}]\n`,
-    );
+  if (args.verbose && (connected.length > 0 || mcpFailed.length > 0)) {
+    process.stderr.write(`[mcp=${connected.length}/${connected.length + mcpFailed.length} servers, ${mcpTools.length} tools${mcpFailed.length > 0 ? `, ${mcpFailed.length} failed` : ""}]\n`);
+  }
+
+  spinner.start();
+  try {
+    const result = await runAgent({
+      adapter,
+      model,
+      systemPrompt: await buildSystemPrompt(workspace, injected),
+      userPrompt: cleanPrompt,
+      forceCompact,
+      tools: [...toolSpecs(), ...mcpTools],
+      mcpTools,
+      toolContext: { workspace, cwd: workspace, env: process.env },
+      onText: args.noStream ? undefined : (t) => process.stdout.write(t),
+      onPhase: (phase) => {
+        if (phase === "waiting") spinner.start();
+        else if (phase === "streaming" || phase === "done") spinner.stop();
+      },
+    });
+    spinner.stop();
+    if (args.noStream) {
+      process.stdout.write(`${result.text}\n`);
+    } else {
+      process.stdout.write("\n"); // 流式文本末尾补换行
+    }
+    if (result.aborted) {
+      process.stderr.write("Aborted: the model kept requesting tools past the iteration cap.\n");
+      process.exitCode = 1;
+    } else if (args.verbose) {
+      process.stderr.write(
+        `[provider=${provider} model=${result.model} iterations=${result.iterations} toolCalls=${result.toolCallsMade} compacted=${result.compactions}]\n`,
+      );
+    }
+  } finally {
+    await mcp.closeAll();
   }
 }
 

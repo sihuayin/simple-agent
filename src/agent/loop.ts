@@ -22,7 +22,7 @@ import {
   type PolicyRule,
 } from "./policy.js";
 import { TOOLS } from "../tools/registry.js";
-import type { ToolContext } from "../tools/types.js";
+import type { ToolContext, ToolEntry } from "../tools/types.js";
 
 const TOOL_RESULT_CAP = 8000;
 
@@ -47,6 +47,8 @@ export interface RunAgentInput {
   ask?: (message: string) => Promise<boolean>;
   /** Hooks (PreToolUse/PostToolUse/SessionStart/Stop); defaults load .hooks from the workspace. */
   hooks?: HookConfig[];
+  /** MCP tools (mcp:<server>:<tool>) discovered at session start; merged into the model-visible set. */
+  mcpTools?: ToolEntry[];
   /** Receives assistant text deltas as they stream in (live output). */
   onText?: (text: string) => void;
   /** Lifecycle: "waiting" before each model call, "streaming" on first text, "done" at the end. */
@@ -76,6 +78,8 @@ export interface AgentResult {
  */
 export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
   const tools = input.tools ?? [];
+  const mcpTools = input.mcpTools ?? [];
+  const mcpByName = new Map(mcpTools.map((t) => [t.name, t]));
   const maxIterations = input.maxIterations ?? 10;
   const contextWindow = input.adapter.info.contextWindow ?? 128000;
   const budget = new TokenBudget(input.budgetConfig ?? { contextWindow });
@@ -198,10 +202,11 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       messages.push({ role: "assistant", content: result.content, toolCalls: result.toolCalls });
       for (const call of result.toolCalls) {
         toolCallsMade += 1;
-        const tool = TOOLS[call.name];
+        const tool = TOOLS[call.name] ?? mcpByName.get(call.name);
         let content: string;
         if (!tool) {
-          content = `Unknown tool: ${call.name}. Available: ${Object.keys(TOOLS).join(", ")}`;
+          const known = [...Object.keys(TOOLS), ...mcpByName.keys()].join(", ");
+          content = `Unknown tool: ${call.name}. Available: ${known}`;
           messages.push({ role: "tool", toolCallId: call.id, content });
           continue;
         }

@@ -117,7 +117,8 @@ Options:
   --version        Print the version
 
 Tools (always available — the model decides whether to call them):
-  read_file, write_file, edit_file, grep, glob, bash, list_files
+  read_file, write_file, edit_file, grep, glob, bash, list_files, remember
+  (plus MCP tools from .mcp.json as mcp_<server>_<tool>)
 
 Environment:
   DEEPSEEK_API_KEY        required for provider "deepseek" (or put it in .env)

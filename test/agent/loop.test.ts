@@ -7,8 +7,9 @@ import type { DeepseekRaw, NormalizedMessage, ProviderAdapter } from "../../src/
 import type { StreamEvent } from "../../src/adapters/stream.js";
 import { collectStream } from "../../src/adapters/stream.js";
 import { runAgent } from "../../src/agent/loop.js";
+import { DEFAULT_RULES } from "../../src/agent/policy.js";
 import { toolSpecs } from "../../src/tools/registry.js";
-import type { ToolContext } from "../../src/tools/types.js";
+import type { ToolContext, ToolEntry } from "../../src/tools/types.js";
 
 let root: string;
 let ctx: ToolContext;
@@ -406,6 +407,66 @@ describe("runAgent", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("mcpTools: model calls mcp_<server>_<tool>, routed through policy + execute", async () => {
+    const adapter = fakeAdapter([toolUseRaw("mcp_fixture_echo", "c1", { text: "hi" }), finalRaw("done")]);
+    const mcpEntry: ToolEntry = {
+      name: "mcp_fixture_echo",
+      description: '[MCP 服务器 "fixture"] 回显',
+      parameters: { type: "object", properties: { text: { type: "string" } } },
+      execute: async (input) => `echo:${JSON.stringify(input)}`,
+    };
+    const policy = { rules: [...DEFAULT_RULES, { tool: "mcp_fixture_*", action: "allow" as const }], protectedPaths: [] };
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), mcpTools: [mcpEntry], toolContext: ctx, policy });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toBe('echo:{"text":"hi"}');
+  });
+
+  it("mcpTools: default fallback is ask — non-TTY rejects (black-box default)", async () => {
+    const adapter = fakeAdapter([toolUseRaw("mcp_shell_execute", "c1", { command: "id" }), finalRaw("done")]);
+    const mcpEntry: ToolEntry = {
+      name: "mcp_shell_execute",
+      description: '[MCP 服务器 "shell"] 执行命令',
+      parameters: { type: "object" },
+      execute: async () => "ran",
+    };
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), mcpTools: [mcpEntry], toolContext: ctx });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[permission denied by user]"); // 兜底 ask → 非 TTY 自动拒
+    expect(toolMsg.content).toContain("mcp_shell_execute");
+  });
+
+  it("mcpTools: ask-confirmed executes (hooks still apply)", async () => {
+    const adapter = fakeAdapter([toolUseRaw("mcp_shell_execute", "c1", { command: "id" }), finalRaw("done")]);
+    const mcpEntry: ToolEntry = {
+      name: "mcp_shell_execute",
+      description: '[MCP 服务器 "shell"] 执行命令',
+      parameters: { type: "object" },
+      execute: async () => "ran",
+    };
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), mcpTools: [mcpEntry], toolContext: ctx, ask: async () => true });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toBe("ran");
+  });
+
+  it("mcpTools: hook matcher mcp_fixture_* intercepts the call", async () => {
+    const adapter = fakeAdapter([toolUseRaw("mcp_fixture_echo", "c1", { text: "hi" }), finalRaw("done")]);
+    const mcpEntry: ToolEntry = {
+      name: "mcp_fixture_echo",
+      description: '[MCP 服务器 "fixture"] 回显',
+      parameters: { type: "object" },
+      execute: async () => "echo:hi",
+    };
+    const policy = { rules: [...DEFAULT_RULES, { tool: "mcp_fixture_*", action: "allow" as const }], protectedPaths: [] };
+    const hooks = [{
+      name: "mcp-guard", event: "PreToolUse" as const, matcher: "mcp_fixture_*",
+      handler: { type: "command" as const, command: `node -e "const d=require('fs').readFileSync(0,'utf8');const c=JSON.parse(d);console.log(JSON.stringify({blocked:true,reason:'mcp-guard-no'}))"` },
+    }];
+    await runAgent({ adapter, model: "m", userPrompt: "go", tools: toolSpecs(), mcpTools: [mcpEntry], toolContext: ctx, policy, hooks });
+    const toolMsg = adapter.chats[1]!.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toContain("[hook blocked]");
+    expect(toolMsg.content).toContain("mcp-guard-no");
   });
 
   it("force-compacts on /compact even below the threshold", async () => {

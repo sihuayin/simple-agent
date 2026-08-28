@@ -99,7 +99,8 @@ export function ruleMatches(
   rule: PolicyRule,
   args: { command?: string; path?: string },
 ): boolean {
-  if (rule.tool !== toolName) return false;
+  // tool 字段按 glob 匹配（`mcp_files_*` 匹配该服务器全部工具；无通配符时即精确匹配）
+  if (!globToRegex(rule.tool, false).test(toolName)) return false;
   if (rule.pattern === undefined) return true; // 工具级规则
   const target = toolName === "bash" ? String(args.command ?? "") : String(args.path ?? "");
   return globToRegex(rule.pattern, toolName !== "bash").test(target);

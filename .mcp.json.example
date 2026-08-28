@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "files": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "env": { "FOO": "bar" }
+    },
+    "remote": { "url": "https://mcp.example.com/mcp" }
+  }
+}
