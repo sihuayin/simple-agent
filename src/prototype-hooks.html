@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型：Hook 系统（PreToolUse / PostToolUse / SessionStart / Stop）</title>
+<style>
+  :root {
+    --accent: #0d9488; --accent-soft: #f0fdfa; --accent-border: #99f6e4;
+    --ink: #1e293b; --muted: #64748b; --border: #e2e8f0;
+    --ok: #059669; --err: #dc2626; --warn: #b45309; --blue: #2563eb;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; color: var(--ink); margin: 0; background: #f8fafc; line-height: 1.6; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px 90px; }
+  header h1 { font-size: 22px; margin: 0 0 6px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 999px; padding: 2px 10px; margin-bottom: 10px; }
+  .question { background: #fff; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; font-size: 13.5px; margin: 10px 0 20px; }
+  section { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 12px; }
+  .pill { display: inline-block; border-radius: 999px; padding: 2px 12px; font-size: 12px; font-weight: 700; }
+  .pill.event { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .pill.cmd { background: #eff6ff; color: var(--blue); border: 1px solid #bfdbfe; }
+  .pill.http { background: #f5f3ff; color: #7c3aed; border: 1px solid #ddd6fe; }
+  .pill.blocked { background: #fef2f2; color: var(--err); border: 1px solid #fecaca; }
+  .pill.modified { background: #fffbeb; color: var(--warn); border: 1px solid #fde68a; }
+  .pill.pass { background: #ecfdf5; color: var(--ok); border: 1px solid #bbf7d0; }
+  .kv { display: grid; grid-template-columns: 170px 1fr; gap: 3px 12px; font-size: 13.5px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; font-weight: 500; font-family: var(--mono); font-size: 12.5px; }
+  .callout { margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 13px; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-border); }
+  .callout.ok { background: #ecfdf5; color: var(--ok); border-color: #bbf7d0; }
+  .callout.warn { background: #fffbeb; color: var(--warn); border-color: #fde68a; }
+  .callout.err { background: #fef2f2; color: var(--err); border-color: #fecaca; }
+  .trace { font-family: var(--mono); font-size: 12px; background: #0f172a; color: #cbd5e1; border-radius: 8px; padding: 12px; max-height: 260px; overflow-y: auto; white-space: pre-wrap; }
+  .trace .hit { color: #fbbf24; } .trace .miss { color: #64748b; } .trace .pass { color: #93c5fd; font-weight: 700; } .trace .block { color: #fca5a5; font-weight: 700; }
+  .row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; }
+  .row .t { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .buttons button { font-size: 13px; padding: 7px 12px; border-radius: 7px; border: 1px solid var(--border); background: #fff; color: var(--ink); cursor: pointer; }
+  .buttons button:hover { border-color: var(--accent); color: var(--accent); }
+  .buttons button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .buttons button.warn { background: #fffbeb; color: var(--warn); border-color: #fde68a; }
+  .buttons button.danger { background: #fef2f2; color: var(--err); border-color: #fecaca; }
+  .buttons button:disabled { opacity: .4; cursor: default; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .tabs button { font-size: 12.5px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
+  .tabs button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .step { font-size: 13px; margin: 6px 0 4px; color: var(--muted); }
+  .step b { color: var(--ink); }
+  .scenario { font-size: 13px; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 8px 0 10px; }
+  .hook { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; font-size: 13px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .hook .t { flex: 1; } .hook .meta { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="badge">原型 · LOGIC</span>
+  <h1>Hook 系统：事件、中间件链、拦截与修改</h1>
+  <div class="question">
+    <b>要回答的问题：</b>四个事件（PreToolUse 拦截/改参、PostToolUse 记录、SessionStart 初始化、Stop 收尾）+ 两种 handler（command 走 stdin JSON / http POST）的模型是否成立？
+    重点推演：① 多个 hook 命中同一工具时的<b>中间件链</b>（参数链式修改、blocked 短路）；② 内置安全策略与 hook 的先后（hook 不能绕过 policy）；③ <b>失败策略</b>（PreToolUse 的 handler 崩溃时：阻止执行还是放行？）；④ 模型感知（被拦截/被改参后，模型看到什么）。
+    <br>底部有 5 个引导走查，也可以随意点上面的按钮自由探索。
+  </div>
+</header>
+
+<section>
+  <h2>当前状态</h2>
+  <div class="kv">
+    <dt>会话阶段</dt><dd id="s-phase">尚未开始</dd>
+    <dt>最近一次工具调用</dt><dd id="s-tool">—</dd>
+    <dt>工具最终参数（经 hook 链后）</dt><dd id="s-final">—</dd>
+    <dt>链上拦截结果</dt><dd id="s-outcome">—</dd>
+    <dt>模型收到的工具结果</dt><dd id="s-model">—</dd>
+    <dt>hook 链评估轨迹</dt><dd id="s-chain">—</dd>
+  </div>
+  <div id="callout" class="callout" style="display:none"></div>
+</section>
+
+<section>
+  <h2>已注册的 hooks</h2>
+  <div id="hooks"></div>
+  <div class="buttons" style="margin-top:10px">
+    <button onclick="act('reset')">重置</button>
+  </div>
+</section>
+
+<section>
+  <h2>自由探索</h2>
+  <div class="buttons">
+    <button class="primary" onclick="act('session-start')">SessionStart（触发初始化 hook）</button>
+    <button onclick="act('hook-danger')">注册：危险命令拦截（PreToolUse / bash，command）</button>
+    <button onclick="act('hook-allowlist')">注册：命令白名单（PreToolUse / bash，command）</button>
+    <button onclick="act('hook-prefix')">注册：写入路径加前缀（PreToolUse / write_file，command）</button>
+    <button onclick="act('hook-lint')">注册：写入后自动 lint（PostToolUse / write_file，http）</button>
+    <button onclick="act('hook-crash')">注册：崩溃的 hook（PreToolUse / bash，command 非零退出）</button>
+    <button onclick="act('hook-notify')">注册：结束时通知（Stop，http）</button>
+    <button onclick="act('tool-bash-rm')">调用工具：bash「rm -rf dist」</button>
+    <button onclick="act('tool-bash-safe')">调用工具：bash「ls src」</button>
+    <button onclick="act('tool-write')">调用工具：write_file「src/app.ts」</button>
+    <button onclick="act('stop')">Stop（Agent 停止，触发收尾 hook）</button>
+  </div>
+  <p class="step" style="margin-top:10px"><b>提示：</b>工具调用会走 内置 policy（安全）→ PreToolUse hook 链 → 执行 → PostToolUse hook 链。先注册 hook 再调用工具，看链上发生了什么。</p>
+</section>
+
+<section>
+  <h2>引导走查</h2>
+  <div class="tabs" id="tabs"></div>
+  <div id="scenario"></div>
+  <div class="buttons" id="steps"></div>
+  <div id="stepnote" class="step"></div>
+</section>
+
+<section>
+  <h2>操作日志</h2>
+  <div class="trace" id="trace"></div>
+</section>
+</div>
+
+<script id="logic">
+/* ===================== 纯逻辑模块（可原样提进真实代码） ===================== */
+const HookLogic = (() => {
+  // Hook = { name, event: "PreToolUse"|"PostToolUse"|"SessionStart"|"Stop",
+  //          matcher?: 工具名 glob（PreToolUse/PostToolUse 用）, handler: {type:"command"|"http", ...} }
+  // Handler 协议：
+  //   command —— 上下文 JSON 写入 stdin；stdout 解析为 JSON 返回
+  //   http    —— 上下文 JSON POST 到 url；响应体 JSON 返回
+  // Handler 返回：{}（放行）| { blocked: true, reason } | { modifiedParams: {...} }
+  // Handler 失败（非零退出/非 2xx/超时/非 JSON）→ 走失败策略：
+  //   PreToolUse → fail-closed（阻止执行，向模型说明 hook 不可用）
+  //   其他事件   → fail-open（跳过该 hook，不阻塞）
+
+  const FAIL_CLOSED_EVENTS = new Set(["PreToolUse"]);
+
+  const empty = () => ({
+    hooks: [], seq: 0,
+    phase: "idle", toolCall: null, chain: [], outcome: null, modelResult: null, lastAction: null,
+  });
+
+  const register = (s, hook) => {
+    if (!hook.name || !hook.event || !hook.handler) return { ...s };
+    s.hooks.push({ id: `h${++s.seq}`, ...hook });
+    return { ...s };
+  };
+
+  // 匹配：matcher 缺失 = 全工具；否则 glob（* 任意）
+  const matches = (matcher, tool) => !matcher || new RegExp("^" + matcher.replace(/\*/g, ".*") + "$").test(tool);
+
+  // ---- 事件分发 ----
+  function dispatch(s, event, payload) {
+    const matched = s.hooks.filter((h) => h.event === event && (!payload.tool || matches(h.matcher, payload.tool)));
+    s.lastAction = { kind: event, matched: matched.map((h) => h.name) };
+    if (matched.length === 0) return { ...s };
+    if (event === "PreToolUse") return preToolUse(s, matched, payload);
+    // 其他事件：逐条执行，失败 fail-open（跳过）
+    const results = matched.map((h) => runHandler(h, { ...payload, hook: h.name }));
+    s.lastAction.details = results.map((r, i) => `${matched[i].name}: ${r.status}`);
+    return { ...s };
+  }
+
+  // ---- PreToolUse：中间件链 ----
+  // 按注册顺序串行：blocked 短路；modifiedParams 传给下一个 hook（链式修改）；都放行 → 执行。
+  function preToolUse(s, matched, payload) {
+    let params = payload.input;
+    const chain = [];
+    for (const h of matched) {
+      const r = runHandler(h, { event: "PreToolUse", tool: payload.tool, input: params, workspace: payload.workspace, hook: h.name });
+      if (r.failed) {
+        // 失败策略：PreToolUse fail-closed
+        chain.push({ hook: h.name, action: "fail-closed", reason: r.error });
+        s.outcome = { kind: "blocked", reason: `Hook「${h.name}」不可用（${r.error}），按 fail-closed 策略阻止执行` };
+        s.modelResult = `[hook blocked] ${s.outcome.reason}。不要尝试绕过；如确需此操作，请在最终回答中向用户说明。`;
+        s.chain = chain;
+        return { ...s };
+      }
+      if (r.blocked) {
+        chain.push({ hook: h.name, action: "blocked", reason: r.reason });
+        s.outcome = { kind: "blocked", reason: r.reason };
+        s.modelResult = `[hook blocked] 工具调用被 Hook「${h.name}」拦截：${r.reason}。不要尝试绕过；如确需此操作，请在最终回答中向用户说明。`;
+        s.chain = chain;
+        return { ...s };
+      }
+      if (r.modifiedParams) {
+        params = { ...params, ...r.modifiedParams };
+        chain.push({ hook: h.name, action: "modified", params: { ...params } });
+      } else {
+        chain.push({ hook: h.name, action: "pass" });
+      }
+    }
+    s.outcome = { kind: "allow", params };
+    s.modelResult = chain.some((c) => c.action === "modified")
+      ? `[hook modified input] 参数已被 Hook 修改，实际执行参数：${JSON.stringify(params)}`
+      : null;
+    s.chain = chain;
+    return { ...s };
+  }
+
+  // ---- 内置 policy 先行（hook 不能绕过） ----
+  // 简化版：deny rm -rf /；其他放行。真实实现调用 policy.evaluatePolicy。
+  function builtinPolicy(tool, input) {
+    if (tool === "bash" && String(input.command ?? "").includes("rm -rf /")) {
+      return { blocked: true, reason: "内置安全策略（Deny：rm -rf /）" };
+    }
+    return { blocked: false };
+  }
+
+  // ---- 工具调用完整流程 ----
+  function toolCall(s, tool, input) {
+    s.phase = "working";
+    s.toolCall = { tool, input };
+    s.chain = []; s.outcome = null; s.modelResult = null;
+    s.lastAction = { kind: "toolCall", tool, input };
+
+    // 1) 内置 policy（安全底线，先于 hook）
+    const p = builtinPolicy(tool, input);
+    if (p.blocked) {
+      s.chain = [{ hook: "(内置 policy)", action: "blocked", reason: p.reason }];
+      s.outcome = { kind: "blocked", reason: p.reason };
+      s.modelResult = `[permission denied] ${p.reason}`;
+      return { ...s };
+    }
+
+    // 2) PreToolUse hook 链
+    const pre = dispatch(s, "PreToolUse", { tool, input, workspace: "/proj" });
+    if (pre.outcome.kind === "blocked") { s.chain = pre.chain; return { ...s }; }
+    const finalParams = pre.outcome.params;
+
+    // 3) 执行（模拟）
+    s.chain = [...pre.chain, { hook: "(执行)", action: "executed", params: finalParams }];
+
+    // 4) PostToolUse hook（fail-open）
+    const post = dispatch(s, "PostToolUse", { tool, input: finalParams, result: `模拟输出 for ${tool}`, workspace: "/proj" });
+    s.chain = [...s.chain, ...(post.lastAction.details ?? []).map((d) => ({ hook: "PostToolUse", action: "ran" }))];
+    return { ...s };
+  }
+
+  // ---- Handler 执行（模拟） ----
+  // 真实实现：command = child_process spawn(stdin=JSON, 解析 stdout)；http = fetch POST
+  function runHandler(h, ctx) {
+    const spec = h.handler;
+    if (spec.type === "command") {
+      if (spec.command === "danger-guard.mjs") {
+        return String(ctx.input.command ?? "").includes("rm -rf")
+          ? { blocked: true, reason: "检测到危险命令（rm -rf），已被 danger-guard 拦截" }
+          : {};
+      }
+      if (spec.command === "allowlist.mjs") {
+        const cmd = String(ctx.input.command ?? "");
+        return /^(npm run|git status|ls )/.test(cmd) ? {} : { blocked: true, reason: "命令不在白名单内" };
+      }
+      if (spec.command === "prefix.mjs") {
+        const p = ctx.input.path ?? "";
+        return p.startsWith("src/") ? {} : { modifiedParams: { path: "src/" + p } };
+      }
+      if (spec.command === "crash.mjs") return { failed: true, error: "exit code 1" };
+    }
+    if (spec.type === "http") {
+      if (spec.url.includes("lint")) return { modifiedParams: {}, note: "lint ok" };
+      if (spec.url.includes("notify")) return {};
+    }
+    return {};
+  }
+
+  return { empty, register, dispatch, toolCall, builtinPolicy };
+})();
+/* ===================== 页面壳（纯展示，不掺逻辑） ===================== */
+
+let state = HookLogic.empty();
+const log = [];
+
+function act(name) {
+  switch (name) {
+    case "reset": state = HookLogic.empty(); log.length = 0; break;
+    case "session-start":
+      state.phase = "running";
+      state = HookLogic.dispatch(state, "SessionStart", { workspace: "/proj" });
+      push("SessionStart", "event"); break;
+    case "hook-danger": state = HookLogic.register(state, { name: "danger-guard", event: "PreToolUse", matcher: "bash", handler: { type: "command", command: "danger-guard.mjs" } }); push("注册 danger-guard", "hook"); break;
+    case "hook-allowlist": state = HookLogic.register(state, { name: "allowlist", event: "PreToolUse", matcher: "bash", handler: { type: "command", command: "allowlist.mjs" } }); push("注册 allowlist", "hook"); break;
+    case "hook-prefix": state = HookLogic.register(state, { name: "src-prefix", event: "PreToolUse", matcher: "write_file", handler: { type: "command", command: "prefix.mjs" } }); push("注册 src-prefix", "hook"); break;
+    case "hook-lint": state = HookLogic.register(state, { name: "auto-lint", event: "PostToolUse", matcher: "write_file", handler: { type: "http", url: "https://lint.example/run" } }); push("注册 auto-lint", "hook"); break;
+    case "hook-crash": state = HookLogic.register(state, { name: "crashy", event: "PreToolUse", matcher: "bash", handler: { type: "command", command: "crash.mjs" } }); push("注册 crashy（崩溃）", "hook"); break;
+    case "hook-notify": state = HookLogic.register(state, { name: "notify", event: "Stop", handler: { type: "http", url: "https://notify.example/agent-done" } }); push("注册 notify", "hook"); break;
+    case "tool-bash-rm": state = HookLogic.toolCall(state, "bash", { command: "rm -rf dist" }); push("调用 bash「rm -rf dist」", "tool"); break;
+    case "tool-bash-safe": state = HookLogic.toolCall(state, "bash", { command: "ls src" }); push("调用 bash「ls src」", "tool"); break;
+    case "tool-write": state = HookLogic.toolCall(state, "write_file", { path: "app.ts", content: "x" }); push("调用 write_file「app.ts」", "tool"); break;
+    case "stop":
+      state.phase = "stopped";
+      state = HookLogic.dispatch(state, "Stop", { workspace: "/proj", finalText: "任务完成" });
+      push("Stop", "event"); break;
+  }
+  render();
+}
+
+function push(text, kind) { log.push({ text, kind, at: new Date().toLocaleTimeString() }); }
+
+function render() {
+  document.getElementById("s-phase").textContent = state.phase === "running" ? "进行中" : state.phase === "stopped" ? "已停止" : "尚未开始";
+  const tc = state.toolCall;
+  document.getElementById("s-tool").textContent = tc ? `${tc.tool}(${JSON.stringify(tc.input)})` : "—";
+  const out = state.outcome;
+  document.getElementById("s-final").textContent = out && out.kind === "allow" ? JSON.stringify(out.params) : "—（未执行）";
+  document.getElementById("s-outcome").textContent = out
+    ? (out.kind === "blocked" ? `⛔ 被拦截：${out.reason}` : "✅ 放行")
+    : "—";
+  document.getElementById("s-model").textContent = state.modelResult ?? "（正常执行，无标注）";
+  document.getElementById("s-chain").innerHTML = state.chain.length
+    ? state.chain.map((c) => {
+        const cls = c.action === "blocked" ? "block" : c.action === "modified" ? "hit" : "pass";
+        const extra = c.action === "modified" ? ` → ${JSON.stringify(c.params)}` : c.reason ? `：${c.reason}` : "";
+        return `<span class="${cls}">${c.hook} [${c.action}]${extra}</span>`;
+      }).join("<br>")
+    : "—";
+
+  // callout
+  const co = document.getElementById("callout");
+  const la = state.lastAction;
+  if (la) {
+    co.style.display = "block";
+    if (la.kind === "toolCall") {
+      co.className = "callout warn";
+      co.innerHTML = `工具调用 ${la.tool} 进入评估：内置 policy → PreToolUse 链 → 执行 → PostToolUse 链。`;
+    } else if (la.kind === "PreToolUse" || la.kind === "PostToolUse" || la.kind === "SessionStart" || la.kind === "Stop") {
+      co.className = "callout ok";
+      const names = la.matched.length ? la.matched.join("、") : "（无匹配 hook，直接放行/跳过）";
+      co.innerHTML = `${la.kind}：命中 ${names}` + (la.details ? ` → ${la.details.join("；")}` : "");
+    } else {
+      co.style.display = "none";
+    }
+  } else {
+    co.style.display = "none";
+  }
+
+  // hooks 列表
+  const box = document.getElementById("hooks");
+  box.innerHTML = "";
+  if (!state.hooks.length) box.innerHTML = '<div class="step">（空——还没有注册 hook）</div>';
+  for (const h of state.hooks) {
+    const div = document.createElement("div");
+    div.className = "hook";
+    const ht = h.handler.type === "command" ? `command: ${h.handler.command}` : `http: ${h.handler.url}`;
+    div.innerHTML = `<span class="pill event">${h.event}</span><span class="pill ${h.handler.type}">${h.handler.type}</span><span class="t">${h.name}</span><span class="meta">matcher: ${h.matcher ?? "全部工具"} · ${ht}</span>`;
+    box.appendChild(div);
+  }
+
+  renderWalkthroughs();
+  const t = document.getElementById("trace");
+  t.innerHTML = log.map((l) => `<div>${l.at} <span class="${l.kind === "hook" ? "hit" : l.kind === "block" ? "block" : "pass"}">${l.text}</span></div>`).join("") || "<div class='miss'>（空）</div>";
+}
+
+const SCENARIOS = [
+  {
+    name: "① 拦截危险命令",
+    desc: "PreToolUse 是最强的事件：handler 返回 blocked → 工具不执行，模型收到 [hook blocked] 并必须向用户说明，而不是绕过。",
+    steps: [
+      { label: "注册 danger-guard（PreToolUse/bash）", act: () => act("hook-danger"), note: "命令 handler：上下文 JSON 走 stdin，返回 JSON。" },
+      { label: "调用 bash「rm -rf dist」", act: () => act("tool-bash-rm"), note: "看『链上拦截结果』⛔ 和『模型收到的工具结果』[hook blocked]——工具没执行。注意：rm -rf / 这类会被内置 policy 先拦（见走查 ④），hook 拦截的是能过 policy 的命令。" },
+    ],
+  },
+  {
+    name: "② 中间件链：链式改参 + 短路",
+    desc: "多个 hook 命中同一工具时按注册顺序串行：modifiedParams 传给下一个 hook（链式），blocked 立即短路。",
+    steps: [
+      { label: "注册 allowlist（PreToolUse/bash）", act: () => act("hook-allowlist"), note: "" },
+      { label: "注册 danger-guard（PreToolUse/bash）", act: () => act("hook-danger"), note: "注册顺序决定链序。" },
+      { label: "调用 bash「ls src」", act: () => act("tool-bash-safe"), note: "链：allowlist 放行 → danger-guard 放行 → 执行。" },
+      { label: "注册 src-prefix（PreToolUse/write_file）", act: () => act("hook-prefix"), note: "" },
+      { label: "调用 write_file「app.ts」", act: () => act("tool-write"), note: "看『工具最终参数』——src-prefix 把路径改成 src/app.ts；模型收到 [hook modified input] 标注，知道实际执行参数。" },
+    ],
+  },
+  {
+    name: "③ 失败策略：fail-closed vs fail-open",
+    desc: "PreToolUse 是拦截机制，handler 崩溃/超时 → fail-closed（阻止执行，宁可错过不可放行）；PostToolUse 等非拦截事件 → fail-open（跳过，不阻塞）。",
+    steps: [
+      { label: "注册 crashy（PreToolUse/bash，崩溃）", act: () => act("hook-crash"), note: "handler 退出码非 0。" },
+      { label: "调用 bash「ls src」", act: () => act("tool-bash-safe"), note: "看『链上拦截结果』——fail-closed：hook 不可用导致执行被阻止（安全侧）。" },
+      { label: "注册 auto-lint（PostToolUse/write_file）", act: () => act("hook-lint"), note: "" },
+      { label: "调用 write_file（走 src-prefix 链）", act: () => act("tool-write"), note: "PostToolUse 失败也只会跳过——写文件不受影响（fail-open）。" },
+    ],
+  },
+  {
+    name: "④ 内置 policy 先行",
+    desc: "hook 是用户自定义层，永远不能绕过内置安全策略——policy 先评估，hook 后评估。",
+    steps: [
+      { label: "注册 allowlist（PreToolUse/bash）", act: () => act("hook-allowlist"), note: "白名单 hook 会放行任何命令……" },
+      { label: "调用 bash「rm -rf /」", act: () => act("tool-bash-rm"), note: "但看『链上拦截结果』——内置 policy 先拦住了，hook 根本没机会放行。安全底线在 hook 之下。" },
+    ],
+  },
+  {
+    name: "⑤ 会话生命周期",
+    desc: "SessionStart 在会话开始时触发（初始化）；Stop 在 agent 停止时触发（通知/摘要）。",
+    steps: [
+      { label: "SessionStart", act: () => act("session-start"), note: "初始化 hook 触发；无匹配则跳过。" },
+      { label: "注册 notify（Stop/http）", act: () => act("hook-notify"), note: "" },
+      { label: "Stop", act: () => act("stop"), note: "收尾 hook 触发——发通知、写摘要。" },
+    ],
+  },
+];
+
+let currentTab = 0;
+function renderWalkthroughs() {
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = "";
+  SCENARIOS.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.textContent = s.name; b.className = i === currentTab ? "active" : "";
+    b.onclick = () => { currentTab = i; render(); };
+    tabs.appendChild(b);
+  });
+  const s = SCENARIOS[currentTab];
+  document.getElementById("scenario").innerHTML = `<div class="scenario"><b>${s.name}：</b>${s.desc}</div>`;
+  const box = document.getElementById("steps");
+  box.innerHTML = "";
+  s.steps.forEach((st, i) => {
+    const b = document.createElement("button");
+    b.textContent = `${i + 1}. ${st.label}`;
+    b.onclick = () => { st.act(); document.getElementById("stepnote").innerHTML = `第 ${i + 1} 步 · ${st.note}`; };
+    box.appendChild(b);
+  });
+  document.getElementById("stepnote").textContent = "";
+}
+
+render();
+</script>
+</body>
+</html>
